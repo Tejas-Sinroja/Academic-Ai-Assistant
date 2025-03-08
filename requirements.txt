@@ -1,0 +1,12 @@
+streamlit
+langchain
+langchain_groq 
+langgraph
+psycopg2-binary
+python-dotenv
+pandas
+numpy
+matplotlib
+langchain-community
+langchainhub
+faiss-cpu
