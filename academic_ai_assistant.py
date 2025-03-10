@@ -163,7 +163,7 @@ def main():
     
     # Footer
     st.sidebar.markdown("---")
-    st.sidebar.caption("© 2023 Academic AI Assistant")
+    st.sidebar.caption("© 2025 Academic AI Assistant")
     
 def home_page():
     st.title("🏠 Welcome to Academic AI Assistant")
