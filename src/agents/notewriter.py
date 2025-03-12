@@ -10,11 +10,30 @@ This agent is responsible for:
 
 from typing import Dict, List, Any, Optional, Tuple
 import os
+import asyncio
+import nest_asyncio
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2 import sql
+from psycopg2 import errors as psycopg2_errors
 import json
 from datetime import datetime
+import tempfile
+import sys
+import importlib.util
+from pathlib import Path
+
+# Apply nest_asyncio to allow nested event loops (needed for Streamlit)
+nest_asyncio.apply()
+
+# Import content extractors
+# First, make sure src is in the path
+module_path = Path(__file__).parent.parent
+if module_path not in sys.path:
+    sys.path.append(str(module_path))
+    
+# Then import the extractors module
+from extractors import extract_website_content, extract_pdf_content, extract_youtube_content
 
 # Load environment variables
 load_dotenv()
@@ -26,12 +45,47 @@ DB_NAME = os.getenv("DB_NAME", "academic_assistant")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
+# Define system prompts for different source types
+WEB_NOTES_PROMPT = """You are an academic assistant tasked with creating detailed, structured notes from web content.
+Follow these guidelines:
+1. Identify the main topic and key concepts
+2. Create a hierarchical structure with headings and subheadings
+3. Use bullet points for key information
+4. Include important definitions, statistics, and examples
+5. Cite references where applicable
+6. Include a brief summary at the beginning
+
+Your notes should be comprehensive but focused on academically relevant information."""
+
+PDF_NOTES_PROMPT = """You are an academic assistant tasked with creating detailed, structured notes from PDF content.
+Follow these guidelines:
+1. Identify the document type (research paper, textbook chapter, etc.)
+2. Extract the main thesis or central arguments
+3. Create a hierarchical structure matching the document organization
+4. Include methodology and findings for research papers
+5. Note definitions, theorems, and important formulas
+6. Include a brief abstract/summary at the beginning
+
+Your notes should preserve the academic rigor of the original while making it more accessible."""
+
+YOUTUBE_NOTES_PROMPT = """You are an academic assistant tasked with creating detailed, structured notes from YouTube video content.
+Follow these guidelines:
+1. Start with the video title, channel, and a brief overview
+2. Create a timeline of key points with timestamps where possible
+3. Organize content into logical sections even if the video isn't structured that way
+4. Highlight key concepts, definitions, and examples
+5. Differentiate between factual content and opinions/commentary
+6. Include a brief summary at the beginning
+
+Your notes should transform the audio-visual content into well-structured written notes for academic use."""
+
 class Notewriter:
     """Notewriter Agent for academic content processing"""
     
-    def __init__(self):
+    def __init__(self, llm):
         """Initialize the notewriter agent"""
         self.conn = self._init_connection()
+        self.llm = llm
     
     def _init_connection(self):
         """Create a connection to the PostgreSQL database"""
@@ -114,42 +168,76 @@ class Notewriter:
             "created_at": row[5]
         }
     
-    def add_note(self, student_id: int, note_data: Dict[str, Any]) -> Optional[int]:
-        """Add a new note for a student"""
-        if not self.conn:
-            return None
+    def add_note(self, student_id, note_data):
+        """
+        Add a note to the database
         
-        cursor = self.conn.cursor()
+        Args:
+            student_id (int): The student ID
+            note_data (dict): Note data including title, content, subject, tags, 
+                              source_type, and source_url
         
+        Returns:
+            int: The note ID if successful, None otherwise
+        """
         try:
-            # Parse tags if they're provided as a string
-            tags = note_data.get("tags", [])
-            if isinstance(tags, str):
-                tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
+            cursor = self.conn.cursor()
             
-            cursor.execute("""
-                INSERT INTO notes (
-                    student_id, title, content, subject, tags
-                )
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                student_id,
-                note_data.get("title", "Untitled Note"),
-                note_data.get("content", ""),
-                note_data.get("subject", ""),
-                tags
-            ))
+            # Extract note data
+            title = note_data.get('title')
+            content = note_data.get('content')
+            subject = note_data.get('subject')
+            tags = note_data.get('tags', [])
+            source_type = note_data.get('source_type')
+            source_url = note_data.get('source_url')
+            
+            # Check if the notes table has the source columns
+            try:
+                # Try inserting with source columns
+                cursor.execute("""
+                    INSERT INTO notes 
+                    (student_id, title, content, subject, tags, source_type, source_url)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (student_id, title, content, subject, tags, source_type, source_url))
+            except psycopg2_errors.UndefinedColumn:
+                # If source columns don't exist, try without them
+                print("Warning: source_type or source_url columns don't exist. Using fallback query.")
+                cursor.execute("""
+                    INSERT INTO notes 
+                    (student_id, title, content, subject, tags)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (student_id, title, content, subject, tags))
+                
+                # Suggest to the user to run update_db_schema.py
+                print("Please run 'python update_db_schema.py' to update the database schema.")
             
             note_id = cursor.fetchone()[0]
             self.conn.commit()
+            cursor.close()
+            
             return note_id
         except Exception as e:
-            self.conn.rollback()
-            print(f"Error adding note: {e}")
-            return None
-        finally:
-            cursor.close()
+            print(f"Error adding note: {str(e)}")
+            # Try a simple fallback insertion if all else fails
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("""
+                    INSERT INTO notes 
+                    (student_id, title, content, subject)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                """, (student_id, title, content, subject))
+                
+                note_id = cursor.fetchone()[0]
+                self.conn.commit()
+                cursor.close()
+                
+                return note_id
+            except Exception as inner_e:
+                print(f"Fallback insertion also failed: {str(inner_e)}")
+                return None
     
     def update_note(self, note_id: int, student_id: int, note_data: Dict[str, Any]) -> bool:
         """Update an existing note"""
@@ -266,8 +354,178 @@ class Notewriter:
         cursor.close()
         return notes
     
+    async def extract_content(self, source_type: str, source: str) -> str:
+        """
+        Extract content from various sources
+        
+        Args:
+            source_type (str): Type of source ('web', 'pdf', 'youtube', 'text')
+            source (str): URL, file path, or raw text
+            
+        Returns:
+            str: Extracted content or error message
+        """
+        try:
+            if source_type == "web":
+                return await extract_website_content(source)
+            elif source_type == "pdf":
+                # For uploaded files, we'll need to handle bytes instead of a path
+                if isinstance(source, bytes):
+                    return extract_pdf_content(source)
+                return extract_pdf_content(source)
+            elif source_type == "youtube":
+                return await extract_youtube_content(source)
+            elif source_type == "text":
+                # Direct text input - just return it
+                return source
+            else:
+                return f"Error: Unsupported source type: {source_type}"
+        except Exception as e:
+            return f"Error extracting content from {source_type}: {str(e)}"
+    
+    async def process_source(self, student_id, source_type, source, title, subject, focus_area="", tags="", learning_style="Visual"):
+        """
+        Process the source content and generate a note
+        
+        Args:
+            student_id (int): The student ID
+            source_type (str): The type of source ('text', 'web', 'youtube', 'pdf')
+            source (str or bytes): The source content or URL
+            title (str): The note title
+            subject (str): The subject of the note
+            focus_area (str, optional): Specific focus area within the subject
+            tags (str, optional): Comma-separated tags
+            learning_style (str, optional): The student's learning style
+            
+        Returns:
+            Dict: Result information including note ID and status
+        """
+        try:
+            # Extract content from source
+            content = await self.extract_content(source_type, source)
+            
+            if not content:
+                return {
+                    "success": False,
+                    "error": f"Failed to extract content from {source_type} source"
+                }
+            
+            # Parse tags
+            tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+            
+            # Construct a prompt based on the source type, learning style and focus area
+            if focus_area:
+                focus_instruction = f"Pay special attention to aspects related to: {focus_area}."
+            else:
+                focus_instruction = ""
+                
+            # Build the system message based on source type
+            if source_type == "web":
+                system_message = f"""
+                Process the following web content about {subject} into comprehensive study notes.
+                {focus_instruction}
+                Tailor the output for a student with a {learning_style} learning style.
+                
+                Create well-structured notes with:
+                - Clear section headings and organization
+                - Key concepts and main points highlighted
+                - Explanations adapted for {learning_style} learners
+                - Visual cues and organizational elements in the Markdown
+                
+                Source: {source}
+                """
+            elif source_type == "youtube":
+                system_message = f"""
+                Process the following YouTube video transcript about {subject} into comprehensive study notes.
+                {focus_instruction}
+                Tailor the output for a student with a {learning_style} learning style.
+                
+                Create well-structured notes that:
+                - Organize the content chronologically from the video
+                - Highlight key points and concepts mentioned
+                - Include timestamps for important moments
+                - Format in a way that helps {learning_style} learners
+                
+                Source: {source}
+                """
+            elif source_type == "pdf":
+                system_message = f"""
+                Process the following PDF content about {subject} into comprehensive study notes.
+                {focus_instruction}
+                Tailor the output for a student with a {learning_style} learning style.
+                
+                Create well-structured notes with:
+                - Preservation of the document's original structure
+                - Key concepts and main points emphasized
+                - Clear section headings from the original document
+                - Learning techniques specifically for {learning_style} learners
+                
+                Format the notes in clean Markdown.
+                """
+            else:  # text
+                system_message = f"""
+                Process the following {subject} content into comprehensive study notes.
+                {focus_instruction}
+                Tailor the output for a student with a {learning_style} learning style.
+                
+                Generate detailed notes that include:
+                - A clear structure and organization
+                - Key concepts and important points
+                - Learning techniques specifically for {learning_style} learners
+                - Any relevant examples or applications
+                
+                Format the notes in clean Markdown.
+                """
+            
+            # Prepare messages for the LLM
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": content}
+            ]
+            
+            # Generate notes
+            processed_content = self.llm.generate(messages)
+            
+            # Determine source URL for storage
+            source_url = source if source_type in ["web", "youtube"] else None
+            
+            # Save the note
+            note_data = {
+                "title": title,
+                "content": processed_content,
+                "subject": subject,
+                "tags": tag_list,
+                "source_type": source_type,
+                "source_url": source_url
+            }
+            
+            note_id = self.add_note(student_id, note_data)
+            
+            if note_id:
+                return {
+                    "success": True,
+                    "note_id": note_id
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to save note to database"
+                }
+                
+        except Exception as e:
+            print(f"Error in process_source: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+            
+    # Close the database connection when done
+    def __del__(self):
+        if hasattr(self, 'conn') and self.conn:
+            self.conn.close()
+    
     def process_content(self, content: str, student_id: int, output_format: str, 
-                        learning_style: str) -> Dict[str, Any]:
+                         learning_style: str) -> Dict[str, Any]:
         """
         Process academic content and generate study materials
         
@@ -365,13 +623,29 @@ class Notewriter:
             }
         
         return formatted_output
-    
-    def close_connection(self):
-        """Close the database connection"""
-        if self.conn:
-            self.conn.close()
 
-# Helper function to get a notewriter instance
-def get_notewriter() -> Notewriter:
-    """Get a notewriter agent instance"""
-    return Notewriter() 
+# Add helper function to get the notewriter instance
+def get_notewriter():
+    """
+    Returns an instance of the Notewriter agent.
+    This function is used by the Streamlit app to get a notewriter instance.
+    
+    Returns:
+        Notewriter: An instance of the Notewriter agent
+    """
+    # Initialize the LLM
+    from src.LLM import GroqLLaMa
+    import os
+    
+    # Get the API key from environment
+    api_key = os.getenv("GROQ_API_KEY", "")
+    
+    # If API key is not available or is the default placeholder, return None
+    if not api_key or api_key == "your_groq_api_key":
+        # This is handled by the Streamlit app which will check for API key
+        # availability and prompt the user if needed
+        return None
+    
+    # Initialize the notewriter with the LLM
+    llm = GroqLLaMa(api_key)
+    return Notewriter(llm) 

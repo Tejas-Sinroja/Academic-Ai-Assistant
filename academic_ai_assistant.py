@@ -9,6 +9,11 @@ from pathlib import Path
 import sys
 import asyncio
 from src.LLM import GroqLLaMa  # Import the LLM class
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+import nest_asyncio
+import uuid
 
 # Add source directory to path
 sys.path.append(str(Path(__file__).parent))
@@ -22,6 +27,10 @@ DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "academic_assistant")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+
+# Apply nest_asyncio to allow asyncio to work in Streamlit 
+# This enables asynchronous content extraction in the app
+nest_asyncio.apply()
 
 def init_connection():
     """Create a connection to the PostgreSQL database"""
@@ -121,6 +130,30 @@ def init_db():
     cursor.close()
     conn.close()
 
+def check_db_schema():
+    """Check if the database schema is up to date"""
+    conn = init_connection()
+    cursor = conn.cursor()
+    
+    schema_issues = []
+    
+    # Check if source_type and source_url columns exist in notes table
+    cursor.execute("""
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'notes' AND column_name IN ('source_type', 'source_url')
+    """)
+    
+    existing_columns = [row[0] for row in cursor.fetchall()]
+    
+    if 'source_type' not in existing_columns or 'source_url' not in existing_columns:
+        schema_issues.append("The notes table is missing the source_type or source_url columns")
+    
+    cursor.close()
+    conn.close()
+    
+    return schema_issues
+
 def main():
     st.set_page_config(
         page_title="Academic AI Assistant", 
@@ -131,6 +164,20 @@ def main():
     
     # Initialize database
     init_db()
+    
+    # Check if database schema is up to date
+    schema_issues = check_db_schema()
+    if schema_issues:
+        st.warning("""
+        ⚠️ Database schema needs to be updated to enable all features.
+        
+        Please run the following command to update your database:
+        ```
+        python update_db_schema.py
+        ```
+        
+        Issues detected:
+        - """ + "\n- ".join(schema_issues))
     
     # Sidebar for navigation
     st.sidebar.title("Academic AI Assistant")
@@ -341,28 +388,71 @@ def notewriter_page():
             if api_key:
                 st.session_state.api_key = api_key
     
-    # Input form for lecture notes
+    # Source type selection
+    st.subheader("Select Content Source")
+    source_type = st.radio(
+        "Choose your source type:",
+        ["Text Input", "Web Page", "YouTube Video", "PDF Document"],
+        horizontal=True
+    )
+    
+    # Create a form for note creation
     with st.form("notewriter_form"):
         title = st.text_input("Note Title")
         subject = st.text_input("Subject")
-        content = st.text_area("Enter lecture content, readings, or notes to process", height=300)
         
-        col1, col2 = st.columns(2)
+        # Source content based on selected type
+        if source_type == "Text Input":
+            content = st.text_area("Enter lecture content, readings, or notes to process", height=300)
+            source_url = None
+            uploaded_file = None
+        elif source_type == "Web Page":
+            content = None
+            source_url = st.text_input("Enter webpage URL:")
+            st.info("The Notewriter will extract and process content from the webpage.")
+            uploaded_file = None
+        elif source_type == "YouTube Video":
+            content = None
+            source_url = st.text_input("Enter YouTube video URL:")
+            st.info("The Notewriter will extract the transcript and process content from the video.")
+            uploaded_file = None
+        elif source_type == "PDF Document":
+            content = None
+            source_url = None
+            uploaded_file = st.file_uploader("Upload PDF document:", type=["pdf"])
+            st.info("The Notewriter will extract and process content from the PDF.")
+        
+        # Additional options
+        col1, col2, col3 = st.columns(3)
         with col1:
-            output_type = st.selectbox(
+            output_format = st.selectbox(
                 "Output Format",
                 ["Comprehensive Notes", "Brief Summary", "Flashcards", "Mind Map"]
             )
         with col2:
-            tags = st.text_input("Tags (comma separated)")
+            focus_area = st.text_input("Focus Area (optional)", 
+                                       placeholder="E.g., historical context, methodology")
+        with col3:
+            tags = st.text_input("Tags (comma separated)", 
+                                 placeholder="E.g., biology, cells, mitosis")
         
         submit = st.form_submit_button("Process Content")
         
-        if submit and title and content:
+        if submit:
             if 'user_id' not in st.session_state:
                 st.warning("Please set up your profile first on the Home page.")
             elif not api_key:
                 st.warning("Please enter your Groq API key to enable AI processing.")
+            elif source_type == "Text Input" and not content:
+                st.warning("Please enter some content to process.")
+            elif source_type == "Web Page" and not source_url:
+                st.warning("Please enter a webpage URL.")
+            elif source_type == "YouTube Video" and not source_url:
+                st.warning("Please enter a YouTube video URL.")
+            elif source_type == "PDF Document" and not uploaded_file:
+                st.warning("Please upload a PDF document.")
+            elif not title or not subject:
+                st.warning("Please provide both a title and subject for your notes.")
             else:
                 # Get student profile to determine learning style
                 conn = init_connection()
@@ -379,75 +469,95 @@ def notewriter_page():
                 
                 learning_style = result[0] if result else "Visual"
                 
-                # Process content using LLM
-                with st.spinner("Processing your content with AI..."):
+                # Import the notewriter agent
+                from src.agents.notewriter import get_notewriter
+                
+                # Initialize notewriter agent
+                notewriter = get_notewriter()
+                
+                if not notewriter:
+                    st.error("Failed to initialize the Notewriter agent. Please check your Groq API key.")
+                    return
+                
+                # Process content using the appropriate method
+                with st.spinner("Processing your content with AI - this may take a few moments..."):
                     try:
-                        # Initialize LLM
-                        llm = GroqLLaMa(api_key)
+                        # Handle different source types
+                        if source_type == "Text Input":
+                            source_data = content
+                            source_type_code = "text"
+                        elif source_type == "Web Page":
+                            source_data = source_url
+                            source_type_code = "web"
+                        elif source_type == "YouTube Video":
+                            source_data = source_url
+                            source_type_code = "youtube"
+                        elif source_type == "PDF Document":
+                            # Read the uploaded file
+                            source_data = uploaded_file.read()
+                            source_type_code = "pdf"
                         
-                        # Construct a prompt based on the output type and learning style
-                        prompt = f"""
-                        Process the following {subject} content into {output_type} format.
-                        Tailor the output for a student with a {learning_style} learning style.
+                        # Process the source
+                        result = asyncio.run(notewriter.process_source(
+                            student_id=st.session_state['user_id'],
+                            source_type=source_type_code,
+                            source=source_data,
+                            title=title,
+                            subject=subject,
+                            focus_area=focus_area,
+                            tags=tags,
+                            learning_style=learning_style
+                        ))
                         
-                        Content: {content}
-                        
-                        Generate a detailed response that includes:
-                        1. A clear structure and organization
-                        2. Key concepts and important points
-                        3. Learning techniques specifically for {learning_style} learners
-                        4. Any relevant examples or applications
-                        """
-                        
-                        messages = [{"role": "user", "content": prompt}]
-                        
-                        # Use synchronous version for better UX in forms
-                        processed_content = llm.generate(messages)
-                        
-                        # Save to database
-                        conn = init_connection()
-                        cursor = conn.cursor()
-                        
-                        # Parse tags
-                        tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
-                        
-                        cursor.execute("""
-                            INSERT INTO notes (student_id, title, content, subject, tags)
-                            VALUES (%s, %s, %s, %s, %s) RETURNING id
-                        """, (st.session_state['user_id'], title, processed_content, subject, tag_list))
-                        
-                        note_id = cursor.fetchone()[0]
-                        conn.commit()
-                        cursor.close()
-                        conn.close()
-                        
-                        st.success(f"Note '{title}' processed and saved successfully!")
-                        
-                        # Show the processed content
-                        st.subheader("Processed Content")
-                        st.markdown(processed_content)
+                        if result["success"]:
+                            st.success(f"Note '{title}' processed and saved successfully!")
+                            
+                            # Store the note ID in session state for viewing
+                            st.session_state['selected_note_id'] = result["note_id"]
+                        else:
+                            st.error(f"Error: {result['error']}")
+                            
+                            # If extraction failed but we have direct content, still try to save it
+                            if source_type == "Text Input":
+                                # Save original content
+                                tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
+                                note_id = notewriter.add_note(
+                                    st.session_state['user_id'],
+                                    {
+                                        "title": title,
+                                        "content": content,
+                                        "subject": subject,
+                                        "tags": tag_list
+                                    }
+                                )
+                                
+                                if note_id:
+                                    st.info("Original content saved without AI processing.")
+                                    st.session_state['selected_note_id'] = note_id
                         
                     except Exception as e:
-                        st.error(f"Error processing content: {str(e)}")
+                        st.error(f"Error: {str(e)}")
                         
-                        # Still save the original content if AI processing fails
-                        conn = init_connection()
-                        cursor = conn.cursor()
-                        
-                        # Parse tags
-                        tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
-                        
-                        cursor.execute("""
-                            INSERT INTO notes (student_id, title, content, subject, tags)
-                            VALUES (%s, %s, %s, %s, %s) RETURNING id
-                        """, (st.session_state['user_id'], title, content, subject, tag_list))
-                        
-                        note_id = cursor.fetchone()[0]
-                        conn.commit()
-                        cursor.close()
-                        conn.close()
-                        
-                        st.info("Original content saved without AI processing.")
+                        # Try to save raw content as fallback
+                        if source_type == "Text Input":
+                            conn = init_connection()
+                            cursor = conn.cursor()
+                            
+                            # Parse tags
+                            tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
+                            
+                            cursor.execute("""
+                                INSERT INTO notes (student_id, title, content, subject, tags)
+                                VALUES (%s, %s, %s, %s, %s) RETURNING id
+                            """, (st.session_state['user_id'], title, content, subject, tag_list))
+                            
+                            note_id = cursor.fetchone()[0]
+                            conn.commit()
+                            cursor.close()
+                            conn.close()
+                            
+                            st.info("Original content saved without AI processing.")
+                            st.session_state['selected_note_id'] = note_id
     
     # Display saved notes
     st.markdown("---")
@@ -491,7 +601,7 @@ def notewriter_page():
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT title, content, subject, tags
+                    SELECT title, content, subject, tags, source_type, source_url
                     FROM notes
                     WHERE id = %s AND student_id = %s
                 """, (st.session_state['selected_note_id'], st.session_state['user_id']))
@@ -504,11 +614,42 @@ def notewriter_page():
                     st.markdown("---")
                     st.subheader(f"📄 {note[0]}")
                     st.caption(f"Subject: {note[2]}")
-                    if note[3]:
+                    
+                    # Display source information if available
+                    if note[4]:  # source_type
+                        source_type_display = note[4].capitalize()
+                        if note[5]:  # source_url
+                            st.caption(f"Source: {source_type_display} - [{note[5]}]({note[5]})")
+                        else:
+                            st.caption(f"Source: {source_type_display}")
+                    
+                    if note[3]:  # tags
                         st.caption(f"Tags: {', '.join(note[3])}")
+                    
                     st.markdown(note[1])
+                    
+                    # Add download button
+                    note_text = f"# {note[0]}\n\nSubject: {note[2]}\n"
+                    if note[4]:  # source_type
+                        source_type_display = note[4].capitalize()
+                        if note[5]:  # source_url
+                            note_text += f"Source: {source_type_display} - {note[5]}\n"
+                        else:
+                            note_text += f"Source: {source_type_display}\n"
+                    if note[3]:  # tags
+                        note_text += f"Tags: {', '.join(note[3])}\n"
+                    note_text += f"\n{note[1]}"
+                    
+                    st.download_button(
+                        label="Download Note as Markdown",
+                        data=note_text,
+                        file_name=f"{note[0].replace(' ', '_')}.md",
+                        mime="text/markdown",
+                    )
         else:
             st.info("You haven't saved any notes yet.")
+    else:
+        st.warning("Please set up your profile first on the Home page.")
 
 def planner_page():
     st.title("📅 Planner")

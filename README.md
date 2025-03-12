@@ -8,6 +8,14 @@ Academic AI Assistant is a powerful multi-agent system designed to transform the
 - **Notewriter**: Processing academic content into personalized study materials using AI
 - **Planner**: Schedule optimization and task management
 - **Advisor**: Personalized learning advice based on your profile and academic data
+- **Profile Management**: Create and manage student profiles with learning styles, academic goals, and performance metrics.
+- **AI-Enhanced Learning Assistant**: Chat with an AI assistant trained on educational resources and personalized to your profile.
+- **Notewriter Agent**: Transform content from various sources (text, web pages, PDFs, YouTube videos) into structured study notes tailored to your learning style.
+- **Study Planner**: Create and manage study plans with time blocks and task prioritization.
+- **Performance Tracking**: Record and analyze academic performance over time.
+- **Resource Management**: Save and organize learning resources and references.
+- **Advisor**: Receive personalized learning strategies and time management advice.
+- **Chatbot Interface**: Ask questions about your academic journey or get assistance with specific topics.
 
 ## Requirements
 

@@ -96,18 +96,20 @@ def create_tables():
         
         # Create notes table
         print("Creating 'notes' table...")
-        cursor.execute('''
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS notes (
             id SERIAL PRIMARY KEY,
             student_id INTEGER REFERENCES students(id),
             title VARCHAR(255) NOT NULL,
-            content TEXT,
+            content TEXT NOT NULL,
             subject VARCHAR(100),
             tags TEXT[],
+            source_type VARCHAR(50),
+            source_url TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        ''')
+        """)
         
         # Create knowledge_base table
         print("Creating 'knowledge_base' table...")
