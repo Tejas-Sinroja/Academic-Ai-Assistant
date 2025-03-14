@@ -17,6 +17,29 @@ Academic AI Assistant is a powerful multi-agent system designed to transform the
 - **Advisor**: Receive personalized learning strategies and time management advice.
 - **Chatbot Interface**: Ask questions about your academic journey or get assistance with specific topics.
 
+## Content Processing Features
+
+The Academic AI Assistant can process content from multiple sources:
+
+### YouTube Video Notes
+Convert any educational YouTube video into comprehensive study notes:
+1. Simply paste a YouTube URL in the Notewriter section
+2. Select your preferred output format (Comprehensive Notes, Brief Summary, etc.)
+3. The system will extract the video transcript and generate structured notes
+4. Notes include timestamps for easy reference back to the video
+
+### Web Page Notes
+Transform articles, blog posts, and educational websites into study materials:
+1. Enter any webpage URL in the Notewriter section
+2. The system will extract the main content, removing ads and navigation elements
+3. Generate well-organized notes focused on key concepts
+
+### PDF Document Processing
+Extract and process content from PDF lecture slides, research papers, and textbooks:
+1. Upload any PDF file through the simple interface
+2. The system will extract text content page by page
+3. Generate structured notes that preserve the document's organization
+
 ## Requirements
 
 - Python 3.8+

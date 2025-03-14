@@ -8,14 +8,20 @@ This module provides functions to extract content from:
 """
 
 import os
-import re
+import sys
+import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
-import asyncio
-from urllib.parse import urlparse, parse_qs
+import re
+from typing import Dict, Any, Optional, Union, List, Tuple
 import tempfile
-import pytube
+from pathlib import Path
+import validators
+from urllib.parse import urlparse, parse_qs
 from youtube_transcript_api import YouTubeTranscriptApi
+
+# Import LangChain's document loaders
+from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
 
 # Third-party libraries for PDF processing
 try:
@@ -24,93 +30,125 @@ except ImportError:
     try:
         from PyPDF2 import PdfReader
     except ImportError:
+        print("Warning: PDF extraction dependencies not installed")
         # Fallback error message
         def extract_pdf_content(pdf_path):
             return "Error: PDF extraction requires pypdf or PyPDF2 to be installed."
 
-async def extract_website_content(url):
+async def extract_website_content(url: str) -> str:
     """
-    Extract content from a website URL.
+    Extract content from a web page
     
     Args:
-        url (str): The URL of the webpage to extract content from
+        url (str): URL of the webpage to extract
         
     Returns:
-        str: The extracted text content or an error message
+        str: Extracted text content
     """
     try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }) as response:
-                if response.status != 200:
-                    return f"Error: Failed to fetch content from {url}, status code: {response.status}"
-                
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # Remove script and style elements
-                for script in soup(["script", "style", "header", "footer", "nav"]):
-                    script.extract()
-                
-                # Get text content
-                text = soup.get_text(separator='\n')
-                
-                # Clean up text
-                lines = (line.strip() for line in text.splitlines())
-                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                text = '\n'.join(chunk for chunk in chunks if chunk)
-                
-                # Add title and URL as metadata
-                title = soup.title.string if soup.title else "Untitled"
-                metadata = f"Title: {title}\nURL: {url}\n\n"
-                
-                return metadata + text
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Get page title
+                    title = soup.title.string if soup.title else "Untitled Page"
+                    
+                    # Remove script and style tags
+                    for script in soup(["script", "style", "nav", "footer", "header"]):
+                        script.extract()
+                    
+                    # Extract main content (article, main, or body)
+                    main_content = soup.find("article") or soup.find("main") or soup.find("body")
+                    
+                    # Get text and clean it
+                    if main_content:
+                        text = main_content.get_text(separator='\n')
+                    else:
+                        text = soup.get_text(separator='\n')
+                    
+                    # Clean the text
+                    lines = (line.strip() for line in text.splitlines())
+                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                    text = '\n'.join(chunk for chunk in chunks if chunk)
+                    
+                    # Format the output
+                    return f"# {title}\n\nSource: {url}\n\n{text}"
+                else:
+                    return f"Error: Unable to fetch URL. Status code: {response.status}"
     except Exception as e:
-        return f"Error extracting content from {url}: {str(e)}"
+        return f"Error extracting content from website: {str(e)}"
 
-def extract_pdf_content(pdf_path_or_bytes):
+def extract_pdf_content(source: Union[str, bytes]) -> str:
     """
-    Extract content from a PDF file.
+    Extract content from a PDF file using LangChain's PyPDFLoader
     
     Args:
-        pdf_path_or_bytes: Either a file path to the PDF or the bytes of the PDF
+        source (str or bytes): Path to PDF file or PDF bytes
         
     Returns:
-        str: The extracted text content or an error message
+        str: Extracted text content
     """
     try:
-        # Check if input is bytes or path
-        if isinstance(pdf_path_or_bytes, bytes):
-            # Create temporary file to save the bytes
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                temp_file.write(pdf_path_or_bytes)
-                pdf_path = temp_file.name
+        # Import LangChain's PDF loader
+        from langchain_community.document_loaders import PyPDFLoader
+        import tempfile
+        
+        pdf_file = None
+        cleanup_needed = False
+        
+        # Handle input as file path or bytes
+        if isinstance(source, str):
+            # It's a file path
+            pdf_path = source
         else:
-            pdf_path = pdf_path_or_bytes
-            if not os.path.exists(pdf_path):
-                return f"Error: PDF file not found at {pdf_path}"
+            # It's bytes data, write to temp file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            temp_file.write(source)
+            temp_file.close()
+            pdf_path = temp_file.name
+            cleanup_needed = True
         
-        text = ""
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PdfReader(file)
-            metadata = f"Document: {os.path.basename(pdf_path)}\n"
-            metadata += f"Pages: {len(pdf_reader.pages)}\n\n"
-            
-            for page_num in range(len(pdf_reader.pages)):
-                page = pdf_reader.pages[page_num]
-                text += f"--- Page {page_num + 1} ---\n"
-                text += page.extract_text() + "\n\n"
+        # Use LangChain's PyPDFLoader to extract text
+        loader = PyPDFLoader(pdf_path)
+        documents = loader.load()
         
-        # Clean up temporary file if we created one
-        if isinstance(pdf_path_or_bytes, bytes) and os.path.exists(pdf_path):
+        # Get metadata from the first page if available
+        title = "Untitled PDF"
+        num_pages = len(documents)
+        
+        if documents:
+            # Try to extract title from metadata if available
+            metadata = documents[0].metadata
+            if metadata and 'source' in metadata:
+                title = os.path.basename(metadata['source'])
+                title = os.path.splitext(title)[0]  # Remove extension
+        
+        # Combine all page content
+        text_content = "\n\n".join([
+            f"--- Page {doc.metadata.get('page', i+1)} ---\n\n{doc.page_content}"
+            for i, doc in enumerate(documents)
+        ])
+        
+        # Clean up temp file if needed
+        if cleanup_needed:
             os.unlink(pdf_path)
         
-        return metadata + text
+        # Format the output
+        return f"# {title}\n\nPages: {num_pages}\n\n{text_content}"
+    
     except Exception as e:
-        # Clean up temporary file if exception occurs
-        if isinstance(pdf_path_or_bytes, bytes) and 'pdf_path' in locals() and os.path.exists(pdf_path):
-            os.unlink(pdf_path)
+        # Clean up temp file in case of error
+        if cleanup_needed and 'pdf_path' in locals():
+            try:
+                os.unlink(pdf_path)
+            except:
+                pass
         return f"Error extracting content from PDF: {str(e)}"
 
 def extract_youtube_id(url):
@@ -142,56 +180,35 @@ def extract_youtube_id(url):
     
     return None
 
-async def extract_youtube_content(url):
+async def extract_youtube_content(url: str) -> Union[str, Tuple[bool, str]]:
     """
-    Extract content from a YouTube video URL.
+    Extract transcript from a YouTube video using youtube_transcript_api
     
     Args:
         url (str): YouTube video URL
         
     Returns:
-        str: The extracted content (metadata + transcript) or an error message
+        Union[str, Tuple[bool, str]]: Either the transcript text (if successful)
+                                     or a tuple (False, error_message) if failed
     """
     try:
+        # Extract video ID from URL
         video_id = extract_youtube_id(url)
         if not video_id:
-            return f"Error: Could not extract YouTube video ID from {url}"
+            return (False, f"Could not extract video ID from URL: {url}")
         
-        # Get video title and metadata using pytube
-        yt = pytube.YouTube(url)
-        title = yt.title
-        channel = yt.author
-        description = yt.description
-        duration = yt.length  # duration in seconds
+        # Get transcript using youtube_transcript_api
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         
-        # Format duration in minutes and seconds
-        minutes, seconds = divmod(duration, 60)
-        duration_str = f"{minutes}:{seconds:02d}"
+        if not transcript_list:
+            return (False, f"No transcript could be extracted from: {url}")
         
-        # Get transcript
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            
-            # Process transcript with timestamps
-            transcript_text = ""
-            for part in transcript_list:
-                # Convert seconds to MM:SS format
-                start = part["start"]
-                minutes, seconds = divmod(int(start), 60)
-                timestamp = f"[{minutes}:{seconds:02d}]"
-                
-                transcript_text += f"{timestamp} {part['text']}\n"
-        except Exception as e:
-            transcript_text = f"No transcript available: {str(e)}"
+        # Combine all transcript text
+        transcript = " ".join(entry["text"] for entry in transcript_list)
         
-        # Combine metadata and transcript
-        content = f"Title: {title}\n"
-        content += f"Channel: {channel}\n"
-        content += f"Duration: {duration_str}\n"
-        content += f"URL: {url}\n\n"
-        content += f"Description:\n{description}\n\n"
-        content += f"Transcript:\n{transcript_text}"
-        
-        return content
+        # Return the transcript text if successful
+        return transcript
+    
     except Exception as e:
-        return f"Error extracting content from YouTube video: {str(e)}" 
+        # Return a tuple indicating failure and the error message
+        return (False, f"Error extracting YouTube content: {str(e)}") 

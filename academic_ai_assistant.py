@@ -14,6 +14,14 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import nest_asyncio
 import uuid
+import validators
+import json
+import tempfile
+from langchain_community.document_loaders import PyPDFLoader
+from src.agents.notewriter import get_notewriter
+from src.agents.planner import get_planner
+from src.agents.advisor import get_advisor
+from src.extractors import extract_youtube_id
 
 # Add source directory to path
 sys.path.append(str(Path(__file__).parent))
@@ -414,7 +422,20 @@ def notewriter_page():
         elif source_type == "YouTube Video":
             content = None
             source_url = st.text_input("Enter YouTube video URL:")
-            st.info("The Notewriter will extract the transcript and process content from the video.")
+            if source_url:
+                try:
+                    video_id = extract_youtube_id(source_url)
+                    if video_id:
+                        st.image(f"http://img.youtube.com/vi/{video_id}/0.jpg", use_column_width=True)
+                except Exception as e:
+                    st.error(f"Error loading video preview: {str(e)}")
+            
+            st.info("""
+            The Notewriter will extract the transcript and process content from the video.
+            
+            **Note:** This feature requires that the YouTube video has captions/transcripts available.
+            Some videos, especially newer ones or those in certain languages, may not have transcripts available.
+            """)
             uploaded_file = None
         elif source_type == "PDF Document":
             content = None
@@ -470,9 +491,6 @@ def notewriter_page():
                 learning_style = result[0] if result else "Visual"
                 
                 # Import the notewriter agent
-                from src.agents.notewriter import get_notewriter
-                
-                # Initialize notewriter agent
                 notewriter = get_notewriter()
                 
                 if not notewriter:
@@ -497,6 +515,19 @@ def notewriter_page():
                             source_data = uploaded_file.read()
                             source_type_code = "pdf"
                         
+                        # Try a specific YouTube validation if needed
+                        if source_type_code == "youtube":
+                            if not validators.url(source_data):
+                                st.error(f"Invalid YouTube URL: {source_data}")
+                                st.info("Please enter a valid YouTube URL (e.g., https://www.youtube.com/watch?v=VIDEO_ID)")
+                                return
+                            
+                            if "youtube.com" not in source_data and "youtu.be" not in source_data:
+                                st.warning(f"URL doesn't appear to be a YouTube link: {source_data}")
+                                continue_anyway = st.button("Continue anyway")
+                                if not continue_anyway:
+                                    return
+                        
                         # Process the source
                         result = asyncio.run(notewriter.process_source(
                             student_id=st.session_state['user_id'],
@@ -515,7 +546,43 @@ def notewriter_page():
                             # Store the note ID in session state for viewing
                             st.session_state['selected_note_id'] = result["note_id"]
                         else:
-                            st.error(f"Error: {result['error']}")
+                            # Special handling for YouTube extraction failures
+                            if source_type_code == "youtube":
+                                st.error(f"Failed to extract YouTube content: {result['error']}")
+                                
+                                # Provide helpful information and alternatives
+                                st.warning("""
+                                ### ⚠️ YouTube Transcript Extraction Failed
+                                
+                                This could be due to one of the following reasons:
+                                
+                                1. **The video doesn't have captions/transcripts available**
+                                2. The video might have disabled automatic transcription
+                                3. The video might be in a language not supported by the transcript API
+                                4. The video might be private or age-restricted
+                                
+                                ### What you can do:
+                                
+                                1. **Try a different YouTube video** that has captions
+                                2. **Check if the video has captions** (look for the CC button in YouTube's player)
+                                3. **Copy the transcript manually** from YouTube:
+                                   - Click the "..." button under the video
+                                   - Select "Show transcript"
+                                   - Copy and paste it as Text Input
+                                """)
+                                
+                                # Option to view available videos with transcripts
+                                if st.button("Show Examples of Videos with Transcripts"):
+                                    st.markdown("""
+                                    ### Examples of Educational Videos with Transcripts:
+                                    
+                                    - [Khan Academy: Introduction to Limits](https://www.youtube.com/watch?v=riXcZT2ICjA)
+                                    - [TED-Ed: The benefits of a bilingual brain](https://www.youtube.com/watch?v=MMmOLN5zBLY)
+                                    - [Crash Course: Introduction to Psychology](https://www.youtube.com/watch?v=vo4pMVb0R6M)
+                                    - [MIT OpenCourseWare](https://www.youtube.com/c/mitocw/videos)
+                                    """)
+                            else:
+                                st.error(f"Error: {result['error']}")
                             
                             # If extraction failed but we have direct content, still try to save it
                             if source_type == "Text Input":
@@ -584,7 +651,7 @@ def notewriter_page():
             
             # Display as table with view buttons
             for index, row in notes_df.iterrows():
-                col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+                col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 1, 1])
                 with col1:
                     st.write(row["Title"])
                 with col2:
@@ -594,6 +661,42 @@ def notewriter_page():
                 with col4:
                     if st.button("View", key=f"view_note_{row['ID']}"):
                         st.session_state['selected_note_id'] = row["ID"]
+                        # Clear delete confirmation flag if set
+                        if 'delete_confirmation' in st.session_state:
+                            del st.session_state['delete_confirmation']
+                with col5:
+                    if st.button("Delete", key=f"delete_note_{row['ID']}"):
+                        st.session_state['delete_note_id'] = row["ID"]
+                        st.session_state['delete_confirmation'] = False
+            
+            # Show delete confirmation
+            if 'delete_note_id' in st.session_state and 'delete_confirmation' in st.session_state and not st.session_state['delete_confirmation']:
+                note_id = st.session_state['delete_note_id']
+                st.warning(f"Are you sure you want to delete this note? This action cannot be undone.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Yes, Delete", key=f"confirm_delete_{note_id}"):
+                        # Import the notewriter agent
+                        notewriter = get_notewriter()
+                        
+                        if notewriter and notewriter.delete_note(note_id, st.session_state['user_id']):
+                            st.success("Note deleted successfully!")
+                            st.session_state['delete_confirmation'] = True
+                            
+                            # Remove the selected note if it's the one being deleted
+                            if 'selected_note_id' in st.session_state and st.session_state['selected_note_id'] == note_id:
+                                del st.session_state['selected_note_id']
+                            
+                            # Refresh the page
+                            st.rerun()
+                        else:
+                            st.error("Failed to delete note.")
+                with col2:
+                    if st.button("Cancel", key=f"cancel_delete_{note_id}"):
+                        # Clear deletion state
+                        del st.session_state['delete_note_id']
+                        del st.session_state['delete_confirmation']
+                        st.rerun()
             
             # Show selected note
             if 'selected_note_id' in st.session_state:
@@ -601,7 +704,7 @@ def notewriter_page():
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT title, content, subject, tags, source_type, source_url
+                    SELECT title, content, subject, tags, source_type, source_url, id
                     FROM notes
                     WHERE id = %s AND student_id = %s
                 """, (st.session_state['selected_note_id'], st.session_state['user_id']))
@@ -612,7 +715,17 @@ def notewriter_page():
                 
                 if note:
                     st.markdown("---")
-                    st.subheader(f"📄 {note[0]}")
+                    # Add note actions in a row
+                    note_id = note[6]  # ID is at index 6 now
+                    col1, col2 = st.columns([6, 1])
+                    with col1:
+                        st.subheader(f"📄 {note[0]}")
+                    with col2:
+                        if st.button("Delete Note", key=f"delete_current_note_{note_id}"):
+                            st.session_state['delete_note_id'] = note_id
+                            st.session_state['delete_confirmation'] = False
+                            st.rerun()
+                    
                     st.caption(f"Subject: {note[2]}")
                     
                     # Display source information if available
@@ -626,6 +739,7 @@ def notewriter_page():
                     if note[3]:  # tags
                         st.caption(f"Tags: {', '.join(note[3])}")
                     
+                    # Display note content
                     st.markdown(note[1])
                     
                     # Add download button
@@ -779,22 +893,29 @@ def planner_page():
             tab1, tab2, tab3 = st.tabs(["All Tasks", "Pending Tasks", "Completed Tasks"])
             
             with tab1:
-                display_tasks(tasks_df)
+                display_tasks(tasks_df, tab_id="all")
             
             with tab2:
-                display_tasks(tasks_df[tasks_df["Status"] == "pending"])
+                display_tasks(tasks_df[tasks_df["Status"] == "pending"], tab_id="pending")
             
             with tab3:
-                display_tasks(tasks_df[tasks_df["Status"] == "completed"])
+                display_tasks(tasks_df[tasks_df["Status"] == "completed"], tab_id="completed")
         else:
             st.info("You haven't added any tasks yet.")
     else:
         st.warning("Please set up your profile first on the Home page.")
 
-def display_tasks(tasks_df):
+def display_tasks(tasks_df, tab_id="all"):
+    """
+    Display a list of tasks with action buttons
+    
+    Args:
+        tasks_df: DataFrame of tasks to display
+        tab_id: Identifier for the tab (all, pending, completed) to ensure unique keys
+    """
     if not tasks_df.empty:
         for index, row in tasks_df.iterrows():
-            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 1, 1])
+            col1, col2, col3, col4, col5, col6 = st.columns([3, 2, 2, 1, 1, 1])
             
             with col1:
                 st.write(f"**{row['Title']}**")
@@ -818,7 +939,7 @@ def display_tasks(tasks_df):
             
             with col5:
                 if row['Status'] == "pending":
-                    if st.button("Complete", key=f"complete_task_{row['ID']}"):
+                    if st.button("Complete", key=f"complete_task_{tab_id}_{row['ID']}"):
                         conn = init_connection()
                         cursor = conn.cursor()
                         
@@ -832,7 +953,37 @@ def display_tasks(tasks_df):
                         cursor.close()
                         conn.close()
                         
-                        st.experimental_rerun()
+                        st.rerun()
+            
+            with col6:
+                if st.button("Delete", key=f"delete_task_{tab_id}_{row['ID']}"):
+                    st.session_state['delete_task_id'] = row['ID']
+                    st.session_state['delete_task_confirmation'] = False
+        
+        # Show delete confirmation
+        if 'delete_task_id' in st.session_state and 'delete_task_confirmation' in st.session_state and not st.session_state['delete_task_confirmation']:
+            task_id = st.session_state['delete_task_id']
+            st.warning(f"Are you sure you want to delete this task? This action cannot be undone.")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Yes, Delete", key=f"confirm_delete_task_{tab_id}_{task_id}"):
+                    # Import the planner agent
+                    planner = get_planner()
+                    
+                    if planner and planner.delete_task(task_id, st.session_state['user_id']):
+                        st.success("Task deleted successfully!")
+                        st.session_state['delete_task_confirmation'] = True
+                        
+                        # Refresh the page
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete task.")
+            with col2:
+                if st.button("Cancel", key=f"cancel_delete_task_{tab_id}_{task_id}"):
+                    # Clear deletion state
+                    del st.session_state['delete_task_id']
+                    del st.session_state['delete_task_confirmation']
+                    st.rerun()
     else:
         st.info("No tasks to display in this category.")
 
@@ -841,7 +992,7 @@ def advisor_page():
     
     st.markdown("""
     The Advisor agent provides personalized learning and time management advice based on your 
-    student profile and academic data.
+    student profile, academic data, and course syllabi.
     """)
     
     if 'user_id' not in st.session_state:
@@ -898,11 +1049,133 @@ def advisor_page():
         st.markdown(f"### Tips for {learning_style} Learners")
         st.markdown(learning_style_tips.get(learning_style, "Customize your study approach."))
     
+    # Syllabus Upload Section
+    st.markdown("---")
+    st.subheader("📚 Course Syllabus Analysis")
+    
+    # Create tabs for Syllabus Upload and Saved Syllabi
+    syllabus_tab1, syllabus_tab2 = st.tabs(["Upload Syllabus", "Saved Syllabi"])
+    
+    with syllabus_tab1:
+        st.markdown("""
+        Upload your course syllabus to get personalized advice tailored to your specific courses.
+        This helps the advisor understand your course requirements, deadlines, and topics.
+        """)
+        
+        uploaded_syllabus = st.file_uploader("Upload Course Syllabus (PDF)", type=["pdf"])
+        
+        if uploaded_syllabus is not None:
+            # Form for syllabus metadata
+            with st.form("syllabus_form"):
+                course_name = st.text_input("Course Name", placeholder="e.g., Introduction to Computer Science")
+                course_code = st.text_input("Course Code", placeholder="e.g., CS101")
+                semester = st.text_input("Semester", placeholder="e.g., Fall 2025")
+                
+                save_syllabus = st.form_submit_button("Save Syllabus")
+                
+                if save_syllabus and course_name and course_code:
+                    try:
+                        # Save uploaded file to a temporary file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                            temp_file.write(uploaded_syllabus.getvalue())
+                            temp_path = temp_file.name
+                        
+                        # Load PDF using LangChain
+                        loader = PyPDFLoader(temp_path)
+                        documents = loader.load()
+                        
+                        # Extract text content
+                        syllabus_content = "\n".join([doc.page_content for doc in documents])
+                        
+                        # Clean up the temporary file
+                        os.unlink(temp_path)
+                        
+                        # Save to database
+                        conn = init_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("""
+                            INSERT INTO knowledge_base (title, content, metadata)
+                            VALUES (%s, %s, %s) 
+                            RETURNING id
+                        """, (
+                            f"Syllabus: {course_name} ({course_code})",
+                            syllabus_content,
+                            json.dumps({
+                                "type": "syllabus",
+                                "course_name": course_name,
+                                "course_code": course_code,
+                                "semester": semester,
+                                "student_id": st.session_state['user_id']
+                            })
+                        ))
+                        
+                        syllabus_id = cursor.fetchone()[0]
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                        
+                        st.success(f"Syllabus for {course_name} ({course_code}) saved successfully!")
+                        
+                        # Set the current syllabus for advice
+                        st.session_state['current_syllabus_id'] = syllabus_id
+                        st.session_state['current_syllabus_name'] = f"{course_name} ({course_code})"
+                        
+                    except Exception as e:
+                        st.error(f"Error processing syllabus: {str(e)}")
+    
+    with syllabus_tab2:
+        # Display saved syllabi
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, title, created_at, metadata
+            FROM knowledge_base
+            WHERE 
+                metadata->>'type' = 'syllabus'
+                AND metadata->>'student_id' = %s
+            ORDER BY created_at DESC
+        """, (str(st.session_state['user_id']),))
+        
+        syllabi = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        if syllabi:
+            st.markdown("### Your Saved Syllabi")
+            
+            for syllabus in syllabi:
+                syllabus_id, title, created_at, metadata = syllabus
+                metadata_dict = json.loads(metadata)
+                
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.write(f"**{title}**")
+                    st.caption(f"Semester: {metadata_dict.get('semester', 'N/A')}")
+                
+                with col2:
+                    created_date = pd.to_datetime(created_at).strftime("%Y-%m-%d")
+                    st.write(f"Added: {created_date}")
+                
+                with col3:
+                    if st.button("Select", key=f"select_syllabus_{syllabus_id}"):
+                        st.session_state['current_syllabus_id'] = syllabus_id
+                        st.session_state['current_syllabus_name'] = title
+                        st.success(f"Selected {title} for advice")
+        else:
+            st.info("You haven't uploaded any syllabi yet. Upload syllabi to get course-specific advice.")
+    
     # AI Advisor Section
     st.markdown("---")
     st.subheader("Ask the Advisor")
     
-    user_question = st.text_area("What would you like advice on?", placeholder="e.g., How can I improve my study efficiency for mathematics?")
+    # Display current selected syllabus if any
+    if 'current_syllabus_id' in st.session_state:
+        st.info(f"Current syllabus: **{st.session_state.get('current_syllabus_name', 'None')}**")
+    
+    user_question = st.text_area("What would you like advice on?", 
+                              placeholder="e.g., How can I prepare for my upcoming exam? OR What topics should I focus on for CS101?")
     
     if st.button("Get Advice") and user_question:
         if not api_key:
@@ -932,6 +1205,20 @@ def advisor_page():
             
             subject_stats = dict(cursor.fetchall())
             
+            # Get current syllabus content if selected
+            syllabus_content = ""
+            if 'current_syllabus_id' in st.session_state:
+                cursor.execute("""
+                    SELECT content, metadata
+                    FROM knowledge_base
+                    WHERE id = %s
+                """, (st.session_state['current_syllabus_id'],))
+                
+                syllabus_result = cursor.fetchone()
+                if syllabus_result:
+                    syllabus_content = syllabus_result[0]
+                    syllabus_metadata = json.loads(syllabus_result[1])
+            
             cursor.close()
             conn.close()
             
@@ -953,12 +1240,42 @@ def advisor_page():
                     
                     Subject Distribution:
                     {', '.join([f"{subject}: {count}" for subject, count in subject_stats.items()])}
+                    """
+                    
+                    # Add syllabus context if available
+                    if syllabus_content:
+                        # Truncate syllabus content if too long (to avoid token limits)
+                        max_syllabus_length = 2000
+                        truncated_syllabus = syllabus_content[:max_syllabus_length]
+                        if len(syllabus_content) > max_syllabus_length:
+                            truncated_syllabus += "... [content truncated]"
+                        
+                        prompt += f"""
+                        
+                        COURSE SYLLABUS INFORMATION:
+                        
+                        Course: {syllabus_metadata.get('course_name')} ({syllabus_metadata.get('course_code')})
+                        Semester: {syllabus_metadata.get('semester')}
+                        
+                        Syllabus Content:
+                        {truncated_syllabus}
+                        """
+                    
+                    prompt += f"""
                     
                     The student is asking: {user_question}
                     
                     Provide detailed, actionable advice that takes into account their learning style, 
                     current academic situation, and best practices in educational psychology. 
+                    
+                    If the student has provided a course syllabus, analyze it to provide advice specific to:
+                    - Important topics and concepts in the course
+                    - Upcoming assignments or exams mentioned in the syllabus
+                    - Recommended study techniques for the specific course material
+                    - How to budget time effectively for this course
+                    
                     Include specific techniques, examples, and a step-by-step approach they can follow.
+                    Your advice should be concrete and practical, not general or vague.
                     """
                     
                     messages = [{"role": "user", "content": prompt}]
@@ -972,97 +1289,56 @@ def advisor_page():
                     
                 except Exception as e:
                     st.error(f"Error generating advice: {str(e)}")
+                    st.warning("Please check your API key and try again.")
+    
+    # Academic Analysis Section
+    st.markdown("---")
+    st.subheader("Advanced Academic Analysis")
+    
+    # Integrate with the advisor agent to get real analysis
+    if st.button("Generate Academic Analysis"):
+        if not api_key:
+            st.warning("Please enter your Groq API key to enable analysis.")
+        else:
+            with st.spinner("Analyzing your academic data..."):
+                try:
+                    # Import the advisor agent
+                    advisor = get_advisor()
                     
-                    # Fallback to static advice
-                    st.markdown("### 💡 General Recommendations")
-                    
-                    if "study" in user_question.lower() or "learning" in user_question.lower():
-                        if learning_style == "Visual":
-                            st.write("""
-                            Based on your visual learning style, try these approaches:
-                            
-                            1. **Create mind maps** for complex topics to visualize relationships
-                            2. **Use color coding** in your notes to highlight key concepts
-                            3. **Watch video tutorials** that demonstrate concepts visually
-                            4. **Create flashcards** with diagrams and visual cues
-                            """)
-                        elif learning_style == "Auditory":
-                            st.write("""
-                            As an auditory learner, these techniques may help you:
-                            
-                            1. **Record lectures** and listen to them when reviewing
-                            2. **Read your notes aloud** to reinforce memory
-                            3. **Join study groups** for discussion-based learning
-                            4. **Use text-to-speech** for reading materials
-                            """)
-                        elif learning_style == "Reading/Writing":
-                            st.write("""
-                            For your reading/writing learning style, consider:
-                            
-                            1. **Take detailed notes** during lectures and readings
-                            2. **Rewrite key concepts** in your own words
-                            3. **Create summaries** of each study session
-                            4. **Use written practice questions** to test your knowledge
-                            """)
-                        elif learning_style == "Kinesthetic":
-                            st.write("""
-                            As a kinesthetic learner, try these approaches:
-                            
-                            1. **Create physical models** or demonstrations of concepts
-                            2. **Take breaks for movement** during study sessions
-                            3. **Use real-world applications** to understand theory
-                            4. **Teach concepts** to others using hands-on demonstrations
-                            """)
-                    else:
-                        st.write("""
-                        I'll need to analyze your academic data and learning patterns to provide personalized advice.
+                    if advisor:
+                        # Get advice from the advisor agent
+                        advice_data = advisor.generate_advice(st.session_state['user_id'])
                         
-                        Try asking about study techniques, time management, or specific subjects!
-                        """)
-    
-    # Study habit analysis
-    st.markdown("---")
-    st.subheader("Study Habit Analysis")
-    
-    # This would be generated from actual user data in the real implementation
-    st.markdown("""
-    ### 📊 Recent Performance
-    
-    Based on your task completion rate and study patterns, here are some insights:
-    
-    - **Task Completion Rate**: 73% over the past 2 weeks
-    - **Peak Productivity Time**: Morning (8-11 AM)
-    - **Challenging Subjects**: Mathematics, Physics
-    - **Strengths**: Consistent daily study, good note-taking
-    
-    ### 🚀 Recommendations
-    
-    1. **Schedule difficult subjects** during your peak productivity time
-    2. **Break down complex tasks** into smaller, manageable chunks
-    3. **Use spaced repetition** for challenging concepts
-    4. **Incorporate more active recall** in your study sessions
-    """)
-    
-    # Time management section
-    st.markdown("---")
-    st.subheader("Time Management Optimization")
-    
-    # Display study hour allocation (placeholder data)
-    st.markdown("### ⏰ Recommended Daily Schedule")
-    
-    # Create sample data for visualization
-    subjects = ["Math", "Physics", "Literature", "History", "Computer Science"]
-    hours = [1.5, 1.0, 0.75, 0.5, 1.25]
-    
-    # Plot a simple bar chart
-    df = pd.DataFrame({
-        "Subject": subjects,
-        "Hours": hours
-    })
-    
-    st.bar_chart(df.set_index("Subject"))
-    
-    st.caption("This schedule is optimized based on your learning style, upcoming deadlines, and task priorities.")
+                        if "error" in advice_data:
+                            st.error(advice_data["error"])
+                        else:
+                            # Display actual data from the advisor agent
+                            st.subheader("Study Habit Analysis")
+                            
+                            # Display task statistics
+                            task_stats = advice_data.get("task_statistics", {})
+                            if task_stats:
+                                st.markdown("### 📊 Current Academic Statistics")
+                                
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("Total Tasks", task_stats.get("total_tasks", 0))
+                                    st.metric("Completion Rate", 
+                                             f"{task_stats.get('completion_rate_14d', 0)}%", 
+                                             help="Task completion rate over the last 14 days")
+                                with col2:
+                                    st.metric("Completed Tasks", task_stats.get("completed_tasks", 0))
+                                    st.metric("Pending Tasks", task_stats.get("pending_tasks", 0))
+                            
+                            # Display recommendations
+                            st.markdown("### 🚀 Personalized Recommendations")
+                            for advice in advice_data.get("time_management_advice", []):
+                                st.markdown(f"- {advice}")
+                    else:
+                        st.error("Failed to initialize the Advisor agent. Please check your API key.")
+                        
+                except Exception as e:
+                    st.error(f"Error generating analysis: {str(e)}")
 
 if __name__ == "__main__":
     # Check if navigation is set in session state

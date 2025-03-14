@@ -1,21 +1,27 @@
-streamlit==1.32.0
-langchain==0.0.335
-groq==0.4.1
-chatgroq==0.0.1
-langgraph==0.0.25
-psycopg2-binary==2.9.9
-python-dotenv==1.0.0
-pandas==2.2.0
-numpy==1.26.3
-matplotlib==3.8.2
-chromadb==0.4.22
-langchain-community==0.0.16
-langchainhub==0.1.14
-faiss-cpu==1.7.4
+streamlit
+langchain
+groq
+chatgroq
+langgraph
+psycopg2-binary
+python-dotenv
+pandas
+numpy
+matplotlib
+chromadb
+langchain-community
+langchainhub
+faiss-cpu
 # Content extraction dependencies
-aiohttp==3.9.3
-beautifulsoup4==4.12.2
-pypdf==3.17.1
-pytube==15.0.0
-youtube-transcript-api==0.6.1
-nest-asyncio==1.6.0
+aiohttp
+beautifulsoup4
+pypdf
+youtube_transcript_api
+# Document loaders
+langchain-text-splitters
+pytesseract
+# PDF processing
+pdfminer.six
+# Core dependencies
+validators
+nest-asyncio

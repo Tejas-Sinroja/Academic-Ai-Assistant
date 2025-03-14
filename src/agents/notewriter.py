@@ -8,7 +8,7 @@ This agent is responsible for:
 4. Summarizing and organizing academic content
 """
 
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union
 import os
 import asyncio
 import nest_asyncio
@@ -22,6 +22,7 @@ import tempfile
 import sys
 import importlib.util
 from pathlib import Path
+import validators
 
 # Apply nest_asyncio to allow nested event loops (needed for Streamlit)
 nest_asyncio.apply()
@@ -33,7 +34,11 @@ if module_path not in sys.path:
     sys.path.append(str(module_path))
     
 # Then import the extractors module
-from extractors import extract_website_content, extract_pdf_content, extract_youtube_content
+try:
+    from extractors import extract_website_content, extract_pdf_content, extract_youtube_content
+except ImportError:
+    # Fallback to importing with full path
+    from src.extractors import extract_website_content, extract_pdf_content, extract_youtube_content
 
 # Load environment variables
 load_dotenv()
@@ -354,7 +359,7 @@ class Notewriter:
         cursor.close()
         return notes
     
-    async def extract_content(self, source_type: str, source: str) -> str:
+    async def extract_content(self, source_type: str, source: str) -> Union[str, Tuple[bool, str]]:
         """
         Extract content from various sources
         
@@ -363,7 +368,7 @@ class Notewriter:
             source (str): URL, file path, or raw text
             
         Returns:
-            str: Extracted content or error message
+            Union[str, Tuple[bool, str]]: Either extracted content or a tuple (False, error_message)
         """
         try:
             if source_type == "web":
@@ -374,14 +379,19 @@ class Notewriter:
                     return extract_pdf_content(source)
                 return extract_pdf_content(source)
             elif source_type == "youtube":
+                # Validate URL before attempting to extract content
+                if not validators.url(source):
+                    return (False, f"Invalid YouTube URL: {source}")
+                if "youtube.com" not in source and "youtu.be" not in source:
+                    return (False, f"URL does not appear to be a YouTube link: {source}")
                 return await extract_youtube_content(source)
             elif source_type == "text":
                 # Direct text input - just return it
                 return source
             else:
-                return f"Error: Unsupported source type: {source_type}"
+                return (False, f"Unsupported source type: {source_type}")
         except Exception as e:
-            return f"Error extracting content from {source_type}: {str(e)}"
+            return (False, f"Error extracting content from {source_type}: {str(e)}")
     
     async def process_source(self, student_id, source_type, source, title, subject, focus_area="", tags="", learning_style="Visual"):
         """
@@ -403,6 +413,13 @@ class Notewriter:
         try:
             # Extract content from source
             content = await self.extract_content(source_type, source)
+            
+            # Check if content extraction failed (returns a tuple)
+            if isinstance(content, tuple) and len(content) == 2 and content[0] is False:
+                return {
+                    "success": False,
+                    "error": content[1]  # Return the error message
+                }
             
             if not content:
                 return {
@@ -441,10 +458,15 @@ class Notewriter:
                 Tailor the output for a student with a {learning_style} learning style.
                 
                 Create well-structured notes that:
-                - Organize the content chronologically from the video
-                - Highlight key points and concepts mentioned
-                - Include timestamps for important moments
-                - Format in a way that helps {learning_style} learners
+                1. Begin with an overview of the main topics covered in the transcript
+                2. Organize the content into logical sections with clear headings
+                3. Identify and highlight key concepts, definitions, and examples
+                4. Create a coherent structure even if the transcript is unstructured
+                5. Provide a summary of the most important points at the end
+                6. Add learning recommendations specifically for {learning_style} learners
+                
+                Format the notes in clean Markdown, using appropriate heading levels, bullet points, 
+                and emphasis to create a visually structured document.
                 
                 Source: {source}
                 """
