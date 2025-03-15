@@ -1,13 +1,14 @@
 # Academic AI Assistant
 
-Academic AI Assistant is a powerful multi-agent system designed to transform the way students manage their academic life. Using LangGraph's workflow framework, it creates a network of specialized AI agents that work together to provide personalized academic support.
+Academic AI Assistant is a powerful multi-agent system designed to transform the way students manage their academic life. Using LangChain's advanced RAG capabilities, it creates a network of specialized AI agents that work together to provide personalized academic support.
 
 ## Features
 
-- **Home**: Central dashboard, student profile management, and AI chat interface
+- **Home**: Central dashboard, student profile management
 - **Notewriter**: Processing academic content into personalized study materials using AI
 - **Planner**: Schedule optimization and task management
 - **Advisor**: Personalized learning advice based on your profile and academic data
+- **PDF Chat**: Advanced RAG-based chat with PDFs, notes, and multi-source knowledge bases
 - **Profile Management**: Create and manage student profiles with learning styles, academic goals, and performance metrics.
 - **AI-Enhanced Learning Assistant**: Chat with an AI assistant trained on educational resources and personalized to your profile.
 - **Notewriter Agent**: Transform content from various sources (text, web pages, PDFs, YouTube videos) into structured study notes tailored to your learning style.
@@ -16,6 +17,8 @@ Academic AI Assistant is a powerful multi-agent system designed to transform the
 - **Resource Management**: Save and organize learning resources and references.
 - **Advisor**: Receive personalized learning strategies and time management advice.
 - **Chatbot Interface**: Ask questions about your academic journey or get assistance with specific topics.
+- **RAG-based PDF Chat**: Interact with your study materials using advanced retrieval-augmented generation.
+- **Multi-Source Knowledge Base**: Combine multiple documents for unified querying.
 
 ## Content Processing Features
 
@@ -40,11 +43,23 @@ Extract and process content from PDF lecture slides, research papers, and textbo
 2. The system will extract text content page by page
 3. Generate structured notes that preserve the document's organization
 
+### Advanced PDF & Notes Chat (New!)
+The PDF Chat feature allows you to have intelligent conversations with your study materials:
+
+1. **PDF Upload**: Upload any PDF document to chat with its content
+2. **Notes Integration**: Select from your saved notes to ask questions
+3. **Multi-Source Knowledge Base**: Combine multiple documents (notes, PDFs, syllabi) into a unified knowledge base
+4. **Retrieval-Augmented Generation (RAG)**: Get precise answers with references to specific sections of your documents
+5. **Source Attribution**: Every answer includes citations to the specific parts of the documents where the information was found
+6. **Intelligent Chunking**: Documents are automatically divided into optimal segments for accurate retrieval
+7. **Context-Aware Responses**: The system understands the context of your questions in relation to your documents
+
 ## Requirements
 
 - Python 3.8+
 - PostgreSQL 12+
 - Groq API key (for all LLM capabilities - this project does not use OpenAI)
+- HuggingFace's all-MiniLM-L6-v2 model (automatically downloaded for embeddings)
 
 ## Installation
 
@@ -106,7 +121,7 @@ The Academic AI Assistant uses a multi-agent architecture:
 3. **Notewriter Agent**: Processes academic content and generates study materials
 4. **Advisor Agent**: Provides personalized learning and time management advice
 
-These agents work together through LangGraph workflows to provide a comprehensive academic support system.
+These agents work together to provide a comprehensive academic support system.
 
 ## Database Structure
 
@@ -115,7 +130,19 @@ The application uses PostgreSQL to store:
 - Student profiles
 - Tasks and deadlines
 - Notes and study materials
-- Knowledge base content
+- Knowledge base content (including syllabus data)
+
+## RAG Implementation Details
+
+The PDF Chat feature uses a sophisticated Retrieval-Augmented Generation pipeline:
+
+1. **Document Processing**: PDFs and notes are processed into document objects with metadata
+2. **Text Chunking**: Documents are split into smaller segments with optimal overlap using RecursiveCharacterTextSplitter
+3. **Embedding Generation**: Text chunks are converted to vector embeddings using HuggingFace's all-MiniLM-L6-v2 model
+4. **Vector Storage**: FAISS is used for efficient similarity search
+5. **Query Processing**: User questions are processed to retrieve the most relevant document chunks
+6. **Answer Generation**: The LLM generates answers based only on the retrieved content, ensuring accuracy
+7. **Source Attribution**: Answers include references to the specific chunks or documents used
 
 ## Development
 
@@ -129,10 +156,9 @@ Academic-AI-Assistant/
 ├── src/
 │   ├── __init__.py
 │   ├── LLM.py                    # LLM integration
-│   ├── data_manager.py           # Data handling
+│   ├── extractors.py             # Content extraction utilities
 │   └── agents/
 │       ├── __init__.py
-│       ├── coordinator.py        # Coordinator agent
 │       ├── planner.py            # Planner agent
 │       ├── notewriter.py         # Notewriter agent
 │       └── advisor.py            # Advisor agent
@@ -156,16 +182,19 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- This project builds upon the ATLAS concept (Academic Task and Learning Agent System)
-- LangGraph for the agent workflow framework
+- LangChain for RAG components and LLM integration
+- FAISS for vector search capabilities 
+- HuggingFace for embedding models
 - Streamlit for the web interface
+- Groq for LLM API access
 
 ## LLM Integration
 
-The application exclusively uses Groq's powerful LLMs (via chatgroq) to power all AI features:
+The application exclusively uses Groq's powerful LLMs (via ChatGroq) to power all AI features:
 
 1. **Chat Interface**: General academic assistance on the home page
 2. **Content Processing**: Convert lecture notes and readings into structured study materials
 3. **Personalized Advice**: Generate tailored studying advice based on learning style and profile
+4. **Document Q&A**: Answer questions about your study materials with RAG-enhanced precision
 
-You'll need a Groq API key to use these features. The application is designed to work solely with Groq's models and does not require any other LLM provider.
+You'll need a Groq API key to use these features. The application is designed to work with Groq's models for optimal performance.

@@ -23,6 +23,15 @@ from src.agents.planner import get_planner
 from src.agents.advisor import get_advisor
 from src.extractors import extract_youtube_id
 
+# RAG components
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.chains import create_qa_with_sources_chain, create_history_aware_retriever, RetrievalQA
+from langchain.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
+
 # Add source directory to path
 sys.path.append(str(Path(__file__).parent))
 
@@ -196,7 +205,8 @@ def main():
         "Home": "🏠",
         "Notewriter": "📝",
         "Planner": "📅",
-        "Advisor": "🧠"
+        "Advisor": "🧠",
+        "PDF Chat": "💬"
     }
     
     # Create selection box with icons
@@ -215,6 +225,8 @@ def main():
         planner_page()
     elif selection == "Advisor":
         advisor_page()
+    elif selection == "PDF Chat":
+        pdf_chat_page()
     
     # Footer
     st.sidebar.markdown("---")
@@ -320,63 +332,6 @@ def home_page():
         - Receive time management tips
         """)
         st.button("Go to Advisor", key="home_to_advisor", on_click=lambda: st.session_state.update({"navigation": "Advisor"}))
-    
-    # Add a chat interface at the bottom of the home page
-    st.markdown("---")
-    st.subheader("💬 Chat with Academic AI Assistant")
-    
-    # Get API key from .env or let user input it
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key or api_key == "your_groq_api_key":
-        api_key = st.text_input("Enter Groq API Key:", type="password")
-    
-    if api_key:
-        # Initialize the LLM
-        llm = GroqLLaMa(api_key)
-        
-        # Initialize chat history in session state if it doesn't exist
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
-        
-        # Display chat history
-        for message in st.session_state.chat_history:
-            role = message["role"]
-            content = message["content"]
-            with st.chat_message(role):
-                st.write(content)
-        
-        # User input - IMPORTANT: this must be outside containers like columns
-        user_input = st.chat_input("Ask me anything about your studies...")
-        
-        if user_input:
-            # Add user message to chat history
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            
-            # Display user message
-            with st.chat_message("user"):
-                st.write(user_input)
-            
-            # Generate response
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                message_placeholder.markdown("Thinking...")
-                
-                async def generate_response():
-                    # Create messages list from chat history
-                    messages = st.session_state.chat_history
-                    response = await llm.agenerate(messages)
-                    return response
-                
-                try:
-                    response = asyncio.run(generate_response())
-                    
-                    # Add assistant response to chat history
-                    st.session_state.chat_history.append({"role": "assistant", "content": response})
-                    
-                    # Display response
-                    message_placeholder.markdown(response)
-                except Exception as e:
-                    message_placeholder.markdown(f"Error generating response: {str(e)}")
 
 def notewriter_page():
     st.title("📝 Notewriter")
@@ -400,7 +355,7 @@ def notewriter_page():
     st.subheader("Select Content Source")
     source_type = st.radio(
         "Choose your source type:",
-        ["Text Input", "Web Page", "YouTube Video", "PDF Document"],
+        ["Text Input", "Web Page", "YouTube Video"],
         horizontal=True
     )
     
@@ -437,11 +392,6 @@ def notewriter_page():
             Some videos, especially newer ones or those in certain languages, may not have transcripts available.
             """)
             uploaded_file = None
-        elif source_type == "PDF Document":
-            content = None
-            source_url = None
-            uploaded_file = st.file_uploader("Upload PDF document:", type=["pdf"])
-            st.info("The Notewriter will extract and process content from the PDF.")
         
         # Additional options
         col1, col2, col3 = st.columns(3)
@@ -510,10 +460,6 @@ def notewriter_page():
                         elif source_type == "YouTube Video":
                             source_data = source_url
                             source_type_code = "youtube"
-                        elif source_type == "PDF Document":
-                            # Read the uploaded file
-                            source_data = uploaded_file.read()
-                            source_type_code = "pdf"
                         
                         # Try a specific YouTube validation if needed
                         if source_type_code == "youtube":
@@ -1049,6 +995,77 @@ def advisor_page():
         st.markdown(f"### Tips for {learning_style} Learners")
         st.markdown(learning_style_tips.get(learning_style, "Customize your study approach."))
     
+    # Student Progress Dashboard
+    st.markdown("---")
+    st.subheader("📊 Academic Progress Dashboard")
+    
+    # Get user's stats
+    conn = init_connection()
+    cursor = conn.cursor()
+    
+    # Notes statistics
+    cursor.execute("""
+        SELECT COUNT(id), COUNT(DISTINCT subject)
+        FROM notes
+        WHERE student_id = %s
+    """, (st.session_state['user_id'],))
+    
+    notes_stats = cursor.fetchone()
+    total_notes = notes_stats[0] if notes_stats else 0
+    unique_subjects = notes_stats[1] if notes_stats else 0
+    
+    # Task statistics
+    cursor.execute("""
+        SELECT status, COUNT(id)
+        FROM tasks
+        WHERE student_id = %s
+        GROUP BY status
+    """, (st.session_state['user_id'],))
+    
+    task_stats = dict(cursor.fetchall())
+    pending_tasks = task_stats.get('pending', 0)
+    completed_tasks = task_stats.get('completed', 0)
+    
+    # Recent activity - includes notes and chat interactions
+    cursor.execute("""
+        SELECT 'note' as type, title, created_at 
+        FROM notes 
+        WHERE student_id = %s
+        UNION ALL
+        SELECT 'chat' as type, title, created_at
+        FROM knowledge_base
+        WHERE metadata->>'type' = 'chat_interaction' AND metadata->>'student_id' = %s
+        ORDER BY created_at DESC
+        LIMIT 5
+    """, (st.session_state['user_id'], str(st.session_state['user_id'])))
+    
+    recent_activity = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+    
+    # Display the stats in a dashboard
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Notes", total_notes)
+    with col2:
+        st.metric("Subjects Covered", unique_subjects)
+    with col3:
+        st.metric("Pending Tasks", pending_tasks)
+    with col4:
+        st.metric("Completed Tasks", completed_tasks)
+        
+    # Display recent activity
+    st.subheader("Recent Activity")
+    if recent_activity:
+        for activity in recent_activity:
+            activity_type, title, date = activity
+            activity_icon = "📝" if activity_type == "note" else "💬"
+            st.write(f"{activity_icon} **{title}** - {date.strftime('%Y-%m-%d %H:%M')}")
+    else:
+        st.info("No recent activity found. Start creating notes or tasks!")
+    
     # Syllabus Upload Section
     st.markdown("---")
     st.subheader("📚 Course Syllabus Analysis")
@@ -1177,11 +1194,11 @@ def advisor_page():
     user_question = st.text_area("What would you like advice on?", 
                               placeholder="e.g., How can I prepare for my upcoming exam? OR What topics should I focus on for CS101?")
     
-    if st.button("Get Advice") and user_question:
+    if st.button("Get Comprehensive Advice") and user_question:
         if not api_key:
             st.warning("Please enter your Groq API key to enable AI advice.")
         else:
-            # Get task and note statistics for context
+            # Gather comprehensive student data for context
             conn = init_connection()
             cursor = conn.cursor()
             
@@ -1205,6 +1222,28 @@ def advisor_page():
             
             subject_stats = dict(cursor.fetchall())
             
+            # Get upcoming deadlines
+            cursor.execute("""
+                SELECT title, due_date, priority
+                FROM tasks
+                WHERE student_id = %s AND status = 'pending' AND due_date >= NOW()
+                ORDER BY due_date ASC
+                LIMIT 5
+            """, (st.session_state['user_id'],))
+            
+            upcoming_tasks = cursor.fetchall()
+            
+            # Get recent notes
+            cursor.execute("""
+                SELECT title, subject, created_at
+                FROM notes
+                WHERE student_id = %s
+                ORDER BY created_at DESC
+                LIMIT 5
+            """, (st.session_state['user_id'],))
+            
+            recent_notes = cursor.fetchall()
+            
             # Get current syllabus content if selected
             syllabus_content = ""
             if 'current_syllabus_id' in st.session_state:
@@ -1219,28 +1258,70 @@ def advisor_page():
                     syllabus_content = syllabus_result[0]
                     syllabus_metadata = json.loads(syllabus_result[1])
             
+            # Get chat interactions for learning patterns
+            cursor.execute("""
+                SELECT content
+                FROM knowledge_base
+                WHERE metadata->>'type' = 'chat_interaction' 
+                AND metadata->>'student_id' = %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (str(st.session_state['user_id']),))
+            
+            chat_interactions = cursor.fetchall()
+            
             cursor.close()
             conn.close()
             
-            with st.spinner("Generating personalized advice..."):
+            with st.spinner("Generating comprehensive academic advice..."):
                 try:
                     # Initialize LLM
                     llm = GroqLLaMa(api_key)
                     
-                    # Create a context-rich prompt
+                    # Create a comprehensive context-rich prompt
                     prompt = f"""
-                    As an academic advisor, provide personalized advice for a student with the following profile:
+                    As an academic advisor, provide comprehensive personalized advice for a student with the following profile:
                     
+                    STUDENT PROFILE:
                     Learning Style: {learning_style}
                     Daily Study Hours: {study_hours}
                     
-                    Task Statistics:
+                    ACADEMIC STATS:
+                    - Total Notes: {total_notes}
+                    - Subjects Covered: {unique_subjects}
                     - Completed tasks: {task_stats.get('completed', 0)}
                     - Pending tasks: {task_stats.get('pending', 0)}
                     
-                    Subject Distribution:
+                    SUBJECT DISTRIBUTION:
                     {', '.join([f"{subject}: {count}" for subject, count in subject_stats.items()])}
+                    
+                    UPCOMING DEADLINES:
                     """
+                    
+                    # Add upcoming tasks if available
+                    if upcoming_tasks:
+                        for task in upcoming_tasks:
+                            task_title, due_date, priority = task
+                            prompt += f"- {task_title} (Due: {due_date.strftime('%Y-%m-%d')}, Priority: {priority})\n"
+                    else:
+                        prompt += "No upcoming deadlines.\n"
+                    
+                    prompt += "\nRECENT NOTES:\n"
+                    
+                    # Add recent notes if available
+                    if recent_notes:
+                        for note in recent_notes:
+                            note_title, note_subject, created_at = note
+                            prompt += f"- {note_title} ({note_subject}, Created: {created_at.strftime('%Y-%m-%d')})\n"
+                    else:
+                        prompt += "No recent notes.\n"
+                    
+                    # Add chat interactions for learning patterns if available
+                    if chat_interactions:
+                        prompt += "\nRECENT LEARNING INTERACTIONS:\n"
+                        for i, chat in enumerate(chat_interactions[:5]):  # Limit to 5 to manage token count
+                            chat_data = json.loads(chat[0])
+                            prompt += f"- Question: {chat_data.get('question', 'N/A')}\n"
                     
                     # Add syllabus context if available
                     if syllabus_content:
@@ -1265,8 +1346,14 @@ def advisor_page():
                     
                     The student is asking: {user_question}
                     
-                    Provide detailed, actionable advice that takes into account their learning style, 
-                    current academic situation, and best practices in educational psychology. 
+                    PROVIDE COMPREHENSIVE ADVICE THAT:
+                    1. Analyzes their current academic situation holistically
+                    2. Takes into account their learning style, subject distribution, and time commitments
+                    3. Provides specific strategies tailored to their situation
+                    4. Includes actionable steps they can take immediately
+                    5. Addresses any upcoming deadlines or course requirements
+                    6. Recommends specific study techniques based on their learning style
+                    7. Suggests how to optimize their study time based on their available hours
                     
                     If the student has provided a course syllabus, analyze it to provide advice specific to:
                     - Important topics and concepts in the course
@@ -1274,8 +1361,7 @@ def advisor_page():
                     - Recommended study techniques for the specific course material
                     - How to budget time effectively for this course
                     
-                    Include specific techniques, examples, and a step-by-step approach they can follow.
-                    Your advice should be concrete and practical, not general or vague.
+                    Your advice should be comprehensive, specific, and actionable.
                     """
                     
                     messages = [{"role": "user", "content": prompt}]
@@ -1284,61 +1370,633 @@ def advisor_page():
                     advice = llm.generate(messages)
                     
                     # Display advice
-                    st.markdown("### 💡 Advisor Recommendations")
+                    st.markdown("### 💡 Comprehensive Academic Advice")
                     st.markdown(advice)
+                    
+                    # Save the advice to knowledge base for future reference
+                    try:
+                        conn = init_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("""
+                            INSERT INTO knowledge_base (title, content, metadata)
+                            VALUES (%s, %s, %s)
+                        """, (
+                            f"Advice: {user_question[:50]}{'...' if len(user_question) > 50 else ''}",
+                            advice,
+                            json.dumps({
+                                "type": "advisor_advice",
+                                "question": user_question,
+                                "student_id": st.session_state['user_id'],
+                                "timestamp": datetime.now().isoformat(),
+                                "syllabus_id": st.session_state.get('current_syllabus_id')
+                            })
+                        ))
+                        
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                    except Exception as db_error:
+                        print(f"Error storing advice: {str(db_error)}")
                     
                 except Exception as e:
                     st.error(f"Error generating advice: {str(e)}")
                     st.warning("Please check your API key and try again.")
     
-    # Academic Analysis Section
+    # Show advice history
     st.markdown("---")
-    st.subheader("Advanced Academic Analysis")
+    st.subheader("Previous Advice")
     
-    # Integrate with the advisor agent to get real analysis
-    if st.button("Generate Academic Analysis"):
-        if not api_key:
-            st.warning("Please enter your Groq API key to enable analysis.")
+    conn = init_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT title, content, created_at
+        FROM knowledge_base
+        WHERE 
+            metadata->>'type' = 'advisor_advice'
+            AND metadata->>'student_id' = %s
+        ORDER BY created_at DESC
+        LIMIT 5
+    """, (str(st.session_state['user_id']),))
+    
+    previous_advice = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    if previous_advice:
+        for i, advice in enumerate(previous_advice):
+            title, content, date = advice
+            with st.expander(f"{title} - {date.strftime('%Y-%m-%d %H:%M')}"):
+                st.markdown(content)
+    else:
+        st.info("No previous advice found. Ask the advisor for advice to get started.")
+
+def pdf_chat_page():
+    st.title("💬 PDF & Notes Chat")
+    
+    st.markdown("""
+    Chat with your study materials. Ask questions about your saved notes or upload a PDF to get instant answers.
+    This feature uses RAG (Retrieval Augmented Generation) technology to provide precise answers from your documents.
+    """)
+    
+    if 'user_id' not in st.session_state:
+        st.warning("Please set up your profile first on the Home page.")
+        return
+    
+    # Get API key from .env or session state
+    api_key = os.getenv("GROQ_API_KEY", "")
+    if not api_key or api_key == "your_groq_api_key":
+        if "api_key" in st.session_state:
+            api_key = st.session_state.api_key
         else:
-            with st.spinner("Analyzing your academic data..."):
-                try:
-                    # Import the advisor agent
-                    advisor = get_advisor()
+            api_key = st.text_input("Enter Groq API Key (required for chat):", type="password")
+            if api_key:
+                st.session_state.api_key = api_key
+    
+    # Create tabs for different content sources
+    source_tab1, source_tab2, source_tab3 = st.tabs(["📄 PDF Upload", "📝 Saved Notes", "🔍 Multi-Source Search"])
+    
+    # For tracking the current content source
+    if 'chat_content' not in st.session_state:
+        st.session_state.chat_content = None
+    
+    if 'chat_content_name' not in st.session_state:
+        st.session_state.chat_content_name = None
+        
+    # For storing RAG pipelines to avoid rebuilding them
+    if 'rag_pipelines' not in st.session_state:
+        st.session_state.rag_pipelines = {}
+        
+    # For storing multi-source selections
+    if 'multi_sources' not in st.session_state:
+        st.session_state.multi_sources = []
+    
+    with source_tab1:
+        st.subheader("Upload a PDF to Chat")
+        
+        uploaded_pdf = st.file_uploader("Upload PDF document:", type=["pdf"])
+        
+        if uploaded_pdf is not None:
+            # Extract PDF content
+            try:
+                # Display processing message
+                with st.spinner("Processing PDF and building knowledge base..."):
+                    # Save uploaded file to a temporary file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                        temp_file.write(uploaded_pdf.getvalue())
+                        temp_path = temp_file.name
                     
-                    if advisor:
-                        # Get advice from the advisor agent
-                        advice_data = advisor.generate_advice(st.session_state['user_id'])
+                    # Load PDF using LangChain - this creates Document objects with metadata
+                    loader = PyPDFLoader(temp_path)
+                    documents = loader.load()
+                    
+                    # Clean up the temporary file
+                    os.unlink(temp_path)
+                    
+                    # Extract text content for preview
+                    pdf_content = "\n".join([doc.page_content for doc in documents])
+                    
+                    # Store in session state
+                    pdf_name = uploaded_pdf.name
+                    st.session_state.chat_content = documents  # Store document objects
+                    st.session_state.chat_content_name = pdf_name
+                    
+                    # Clear any existing RAG pipeline for this document to rebuild it
+                    pipeline_key = f"rag_{hash(pdf_name)}"
+                    if pipeline_key in st.session_state.rag_pipelines:
+                        del st.session_state.rag_pipelines[pipeline_key]
+                    
+                    st.success(f"Loaded and indexed PDF: {pdf_name}")
+                    
+                    # Display a preview of the content
+                    with st.expander("PDF Content Preview"):
+                        st.text(pdf_content[:500] + "..." if len(pdf_content) > 500 else pdf_content)
+                
+            except Exception as e:
+                st.error(f"Error processing PDF: {str(e)}")
+    
+    with source_tab2:
+        st.subheader("Chat with Your Notes")
+        
+        # Get user's notes
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, title, subject, created_at 
+            FROM notes 
+            WHERE student_id = %s
+            ORDER BY created_at DESC
+        """, (st.session_state['user_id'],))
+        
+        notes = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        if notes:
+            notes_options = ["Select a note..."] + [f"{note[1]} ({note[2]})" for note in notes]
+            selected_note_index = st.selectbox("Choose a note to chat with:", 
+                                              options=range(len(notes_options)),
+                                              format_func=lambda x: notes_options[x])
+            
+            if selected_note_index > 0:
+                # Get the actual note
+                note_id = notes[selected_note_index - 1][0]
+                
+                conn = init_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT title, content
+                    FROM notes
+                    WHERE id = %s AND student_id = %s
+                """, (note_id, st.session_state['user_id']))
+                
+                note = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                
+                if note:
+                    # Display processing message
+                    with st.spinner("Processing note and building knowledge base..."):
+                        note_title, note_content = note
                         
-                        if "error" in advice_data:
-                            st.error(advice_data["error"])
-                        else:
-                            # Display actual data from the advisor agent
-                            st.subheader("Study Habit Analysis")
+                        # Store in session state
+                        st.session_state.chat_content = note_content
+                        st.session_state.chat_content_name = note_title
+                        
+                        # Clear any existing RAG pipeline for this note to rebuild it
+                        pipeline_key = f"rag_{hash(note_title)}"
+                        if pipeline_key in st.session_state.rag_pipelines:
+                            del st.session_state.rag_pipelines[pipeline_key]
+                        
+                        st.success(f"Loaded and indexed note: {note_title}")
+                        
+                        # Display a preview of the content
+                        with st.expander("Note Content Preview"):
+                            st.text(note_content[:500] + "..." if len(note_content) > 500 else note_content)
+        else:
+            st.info("You haven't saved any notes yet. Create notes using the Notewriter feature.")
+    
+    with source_tab3:
+        st.subheader("Multi-Source Knowledge Base")
+        st.markdown("""
+        Select multiple notes and PDFs to build a comprehensive knowledge base. 
+        This allows you to ask questions across all your study materials at once.
+        """)
+        
+        # Get user's notes for selection
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, title, subject
+            FROM notes 
+            WHERE student_id = %s
+            ORDER BY subject, title
+        """, (st.session_state['user_id'],))
+        
+        notes = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Get syllabi from knowledge base
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, title, metadata
+            FROM knowledge_base
+            WHERE 
+                metadata->>'type' = 'syllabus'
+                AND metadata->>'student_id' = %s
+            ORDER BY title
+        """, (str(st.session_state['user_id']),))
+        
+        syllabi = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Display available sources with checkboxes
+        st.subheader("Select Sources")
+        
+        with st.form("multi_source_form"):
+            st.markdown("### Notes")
+            selected_notes = []
+            if notes:
+                for note_id, title, subject in notes:
+                    if st.checkbox(f"{title} ({subject})", key=f"note_{note_id}"):
+                        selected_notes.append(note_id)
+            else:
+                st.info("No notes available. Create notes using the Notewriter feature.")
+                
+            st.markdown("### Syllabi")
+            selected_syllabi = []
+            if syllabi:
+                for syllabus_id, title, _ in syllabi:
+                    if st.checkbox(f"{title}", key=f"syllabus_{syllabus_id}"):
+                        selected_syllabi.append(syllabus_id)
+            else:
+                st.info("No syllabi available. Upload syllabi in the Advisor section.")
+                
+            build_kb_button = st.form_submit_button("Build Multi-Source Knowledge Base")
+            
+            if build_kb_button:
+                if not selected_notes and not selected_syllabi:
+                    st.warning("Please select at least one source to build the knowledge base.")
+                else:
+                    with st.spinner("Building multi-source knowledge base..."):
+                        # Get content for all selected sources
+                        sources_list = []
+                        
+                        # Get selected notes
+                        if selected_notes:
+                            conn = init_connection()
+                            cursor = conn.cursor()
                             
-                            # Display task statistics
-                            task_stats = advice_data.get("task_statistics", {})
-                            if task_stats:
-                                st.markdown("### 📊 Current Academic Statistics")
-                                
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.metric("Total Tasks", task_stats.get("total_tasks", 0))
-                                    st.metric("Completion Rate", 
-                                             f"{task_stats.get('completion_rate_14d', 0)}%", 
-                                             help="Task completion rate over the last 14 days")
-                                with col2:
-                                    st.metric("Completed Tasks", task_stats.get("completed_tasks", 0))
-                                    st.metric("Pending Tasks", task_stats.get("pending_tasks", 0))
+                            placeholders = ', '.join(['%s'] * len(selected_notes))
+                            query = f"""
+                                SELECT id, title, content
+                                FROM notes
+                                WHERE id IN ({placeholders}) AND student_id = %s
+                            """
                             
-                            # Display recommendations
-                            st.markdown("### 🚀 Personalized Recommendations")
-                            for advice in advice_data.get("time_management_advice", []):
-                                st.markdown(f"- {advice}")
+                            cursor.execute(query, selected_notes + [st.session_state['user_id']])
+                            note_data = cursor.fetchall()
+                            cursor.close()
+                            conn.close()
+                            
+                            for note_id, title, content in note_data:
+                                sources_list.append((content, f"Note: {title}"))
+                        
+                        # Get selected syllabi
+                        if selected_syllabi:
+                            conn = init_connection()
+                            cursor = conn.cursor()
+                            
+                            placeholders = ', '.join(['%s'] * len(selected_syllabi))
+                            query = f"""
+                                SELECT id, title, content
+                                FROM knowledge_base
+                                WHERE id IN ({placeholders})
+                            """
+                            
+                            cursor.execute(query, selected_syllabi)
+                            syllabus_data = cursor.fetchall()
+                            cursor.close()
+                            conn.close()
+                            
+                            for syllabus_id, title, content in syllabus_data:
+                                sources_list.append((content, f"Syllabus: {title}"))
+                        
+                        # Combine all sources
+                        all_documents = combine_knowledge_sources(sources_list)
+                        
+                        # Store for chat interface
+                        st.session_state.chat_content = all_documents
+                        st.session_state.chat_content_name = f"Multi-Source ({len(sources_list)} documents)"
+                        
+                        # Clear any existing RAG pipeline
+                        pipeline_key = f"rag_multi_source_{hash(tuple(selected_notes + selected_syllabi))}"
+                        if pipeline_key in st.session_state.rag_pipelines:
+                            del st.session_state.rag_pipelines[pipeline_key]
+                            
+                        # Pre-initialize pipeline if API key is available
+                        if api_key:
+                            with st.spinner("Building knowledge retrieval system..."):
+                                llm = GroqLLaMa(api_key)
+                                qa_chain = create_rag_pipeline(
+                                    all_documents,
+                                    f"Multi-Source ({len(sources_list)} documents)",
+                                    llm
+                                )
+                                st.session_state.rag_pipelines[pipeline_key] = qa_chain
+                        
+                        st.success(f"Built knowledge base with {len(sources_list)} sources. You can now chat with all selected materials!")
+        
+    # Chat interface
+    st.markdown("---")
+    
+    if st.session_state.chat_content:
+        st.subheader(f"Chat with: {st.session_state.chat_content_name}")
+        
+        # Initialize chat history for this content if not exists
+        chat_history_key = f"chat_history_{hash(st.session_state.chat_content_name)}"
+        if chat_history_key not in st.session_state:
+            st.session_state[chat_history_key] = []
+        
+        # Display chat history
+        for message in st.session_state[chat_history_key]:
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+                
+                # Display sources if available
+                if "sources" in message and message["sources"]:
+                    st.caption("**Sources:**")
+                    for source in message["sources"]:
+                        st.caption(f"- {source}")
+        
+        # Chat input
+        user_question = st.chat_input("Ask a question about this content...")
+        
+        if user_question and api_key:
+            # Add user message to chat history
+            st.session_state[chat_history_key].append({
+                "role": "user", 
+                "content": user_question
+            })
+            
+            # Display user message
+            with st.chat_message("user"):
+                st.write(user_question)
+            
+            # Generate response
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                message_placeholder.markdown("Thinking...")
+                
+                try:
+                    # Initialize LLM
+                    llm = GroqLLaMa(api_key)
+                    
+                    # Get or create RAG pipeline for this content
+                    pipeline_key = f"rag_{hash(st.session_state.chat_content_name)}"
+                    
+                    if pipeline_key not in st.session_state.rag_pipelines:
+                        with st.spinner("Building knowledge retrieval system..."):
+                            # Create a new RAG pipeline
+                            qa_chain = create_rag_pipeline(
+                                st.session_state.chat_content, 
+                                st.session_state.chat_content_name,
+                                llm
+                            )
+                            # Cache the pipeline for future use
+                            st.session_state.rag_pipelines[pipeline_key] = qa_chain
                     else:
-                        st.error("Failed to initialize the Advisor agent. Please check your API key.")
+                        # Use existing pipeline
+                        qa_chain = st.session_state.rag_pipelines[pipeline_key]
+                    
+                    # Execute the query against the RAG pipeline
+                    with st.spinner("Searching document and generating answer..."):
+                        result = qa_chain({"query": user_question})
                         
+                        # Extract the response and source documents
+                        response = result["result"]
+                        source_docs = result["source_documents"]
+                        
+                        # Extract source information
+                        sources = []
+                        for doc in source_docs:
+                            source_info = []
+                            if "source" in doc.metadata:
+                                source_info.append(doc.metadata["source"])
+                            if "chunk_id" in doc.metadata:
+                                source_info.append(f"Chunk {doc.metadata['chunk_id']}")
+                            sources.append(" - ".join(source_info))
+                    
+                    # Add assistant response to chat history with sources
+                    st.session_state[chat_history_key].append({
+                        "role": "assistant", 
+                        "content": response,
+                        "sources": sources
+                    })
+                    
+                    # Store interaction in database for future reference
+                    try:
+                        conn = init_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("""
+                            INSERT INTO knowledge_base (title, content, metadata)
+                            VALUES (%s, %s, %s)
+                        """, (
+                            f"Chat: {st.session_state.chat_content_name} - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                            json.dumps({
+                                "question": user_question,
+                                "answer": response,
+                                "sources": sources
+                            }),
+                            json.dumps({
+                                "type": "chat_interaction",
+                                "content_name": st.session_state.chat_content_name,
+                                "student_id": st.session_state['user_id'],
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        ))
+                        
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                    except Exception as db_error:
+                        print(f"Error storing chat interaction: {str(db_error)}")
+                    
+                    # Update the placeholder with the response
+                    # First, clear the placeholder to remove the "Thinking..." message
+                    message_placeholder.empty()
+                    
+                    # Then create content within the assistant message block
+                    st.markdown(response)
+                    
+                    # Display sources if available
+                    if sources:
+                        st.caption("**Sources:**")
+                        for source in sources:
+                            st.caption(f"- {source}")
+                    
                 except Exception as e:
-                    st.error(f"Error generating analysis: {str(e)}")
+                    error_msg = f"Error generating response: {str(e)}"
+                    # Clear the placeholder and display the error
+                    message_placeholder.empty()
+                    st.markdown(error_msg)
+                    
+                    # Add error to chat history
+                    st.session_state[chat_history_key].append({
+                        "role": "assistant", 
+                        "content": error_msg
+                    })
+        elif not api_key and user_question:
+            st.warning("Please enter your Groq API key to enable chat.")
+    else:
+        st.info("Upload a PDF, select a saved note, or build a multi-source knowledge base to start chatting.")
+        
+    # Add option to clear chat history
+    if st.session_state.chat_content and chat_history_key in st.session_state and st.session_state[chat_history_key]:
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("Clear Chat History"):
+                st.session_state[chat_history_key] = []
+                st.rerun()
+        with col2:
+            if st.button("Clear Knowledge Base (Reset Index)"):
+                # Clear the RAG pipeline to force rebuilding it
+                pipeline_key = f"rag_{hash(st.session_state.chat_content_name)}"
+                if pipeline_key in st.session_state.rag_pipelines:
+                    del st.session_state.rag_pipelines[pipeline_key]
+                st.success("Knowledge base cleared and will be rebuilt on your next question.")
+                st.rerun()
+
+def create_rag_pipeline(content, content_name, llm):
+    """
+    Create a RAG (Retrieval Augmented Generation) pipeline for document Q&A.
+    
+    Args:
+        content (str): The document content to process
+        content_name (str): Name of the document for metadata
+        llm: The language model to use for generation
+        
+    Returns:
+        A retrieval QA chain for answering questions about the document
+    """
+    # Create documents for ingestion
+    if isinstance(content, str):
+        # Create a Document object with metadata
+        document = Document(
+            page_content=content,
+            metadata={"source": content_name}
+        )
+        documents = [document]
+    else:
+        # If it's already a list of Documents
+        documents = content
+    
+    # Split documents into smaller chunks for better retrieval
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500,
+        chunk_overlap=150,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+    
+    splits = text_splitter.split_documents(documents)
+    
+    # Add chunk IDs to document metadata
+    for i, split in enumerate(splits):
+        split.metadata["chunk_id"] = i
+    
+    # Initialize embeddings - use a lightweight model
+    embeddings = HuggingFaceEmbeddings(
+        model_name="all-MiniLM-L6-v2",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
+    )
+    
+    # Create vector store for similarity search
+    vectorstore = FAISS.from_documents(splits, embeddings)
+    retriever = vectorstore.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 4}  # Retrieve top 4 chunks for each query
+    )
+    
+    # Create prompt template
+    prompt_template = """
+    You are an academic assistant helping a student understand their study materials.
+    Use only the following retrieved context to answer the question. If you don't know the 
+    answer or if it's not in the context, say that you don't have that information in the material.
+    
+    Be accurate, helpful, clear, and concise.
+    
+    Context:
+    {context}
+    
+    Question: {question}
+    
+    Answer:
+    """
+    
+    # Create prompt
+    prompt = PromptTemplate(
+        template=prompt_template,
+        input_variables=["context", "question"]
+    )
+    
+    # If we have a custom GroqLLaMa instance, use its chat_model attribute
+    if hasattr(llm, 'chat_model'):
+        llm_for_chain = llm.chat_model
+    else:
+        llm_for_chain = llm
+    
+    # Create chain
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm_for_chain,
+        chain_type="stuff",
+        retriever=retriever,
+        return_source_documents=True,
+        chain_type_kwargs={"prompt": prompt}
+    )
+    
+    return qa_chain
+
+def combine_knowledge_sources(sources_list):
+    """
+    Combine multiple knowledge sources (notes, PDFs) into a single collection
+    for unified querying.
+    
+    Args:
+        sources_list: List of tuples (content, name) to combine
+        
+    Returns:
+        A RAG pipeline that can query across all sources
+    """
+    # Create a list of documents
+    all_documents = []
+    
+    for content, name in sources_list:
+        # Handle different content types
+        if isinstance(content, list) and all(isinstance(item, Document) for item in content):
+            # It's already a list of Document objects
+            # Add source name to metadata
+            for doc in content:
+                doc.metadata["source"] = name
+            all_documents.extend(content)
+        else:
+            # It's raw text, create a Document
+            document = Document(
+                page_content=content,
+                metadata={"source": name}
+            )
+            all_documents.append(document)
+    
+    return all_documents
 
 if __name__ == "__main__":
     # Check if navigation is set in session state

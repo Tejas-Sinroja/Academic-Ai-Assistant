@@ -1,7 +1,7 @@
 streamlit
 langchain
 groq
-chatgroq
+langchain-groq
 langgraph
 psycopg2-binary
 python-dotenv
@@ -12,6 +12,7 @@ chromadb
 langchain-community
 langchainhub
 faiss-cpu
+sentence-transformers
 # Content extraction dependencies
 aiohttp
 beautifulsoup4
@@ -20,6 +21,9 @@ youtube_transcript_api
 # Document loaders
 langchain-text-splitters
 pytesseract
+# RAG components
+langchain-core
+langchain-openai
 # PDF processing
 pdfminer.six
 # Core dependencies

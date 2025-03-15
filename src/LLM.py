@@ -2,6 +2,9 @@ import groq
 import asyncio
 from langchain_groq import ChatGroq
 from typing import List, Dict, Optional
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 class LLMConfig:
     """Configuration settings for the LLM."""
@@ -11,7 +14,8 @@ class LLMConfig:
 
 class GroqLLaMa:
     """
-    A class to interact with Groq Cloud API using ChatGroq.
+    A wrapper class for ChatGroq to maintain backward compatibility.
+    This class provides a bridge between the existing codebase and LangChain's expectations.
     """
 
     def __init__(self, api_key: str):
@@ -21,9 +25,23 @@ class GroqLLaMa:
             api_key (str): Groq Cloud API authentication key
         """
         self.config = LLMConfig()
-        self.client = ChatGroq(api_key=api_key)
+        # Create a ChatGroq model that implements the Runnable interface
+        self.chat_model = ChatGroq(
+            model_name=self.config.model,
+            api_key=api_key,
+            max_tokens=self.config.max_tokens,
+            temperature=self.config.default_temp
+        )
+        # Keep the direct groq client for backward compatibility
         self.groq_client = groq.Client(api_key=api_key)
-
+        
+    def __getattr__(self, name):
+        """
+        Pass through any attribute access to the underlying ChatGroq model.
+        This allows this class to behave like the ChatGroq model for LangChain compatibility.
+        """
+        return getattr(self.chat_model, name)
+    
     async def agenerate(
         self,
         messages: List[Dict],
@@ -38,7 +56,7 @@ class GroqLLaMa:
         Returns:
             str: Generated text response
         """
-        # Use the groq client directly for async operation since ChatGroq doesn't have achat_completion
+        # Use the groq client directly for async operation
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
@@ -66,6 +84,7 @@ class GroqLLaMa:
         Returns:
             str: Generated text response
         """
+        # For direct usage outside of LangChain's Runnable interface
         response = self.groq_client.chat.completions.create(
             model=self.config.model,
             messages=messages,
