@@ -233,7 +233,7 @@ def main():
     st.sidebar.caption("© 2025 Academic AI Assistant")
     
 def home_page():
-    st.title("🏠 Welcome to Academic AI Assistant")
+    st.title("🏠 Academic AI Assistant")
     
     col1, col2 = st.columns([2, 1])
     
@@ -1164,7 +1164,11 @@ def advisor_page():
             
             for syllabus in syllabi:
                 syllabus_id, title, created_at, metadata = syllabus
-                metadata_dict = json.loads(metadata)
+                # Handle metadata - check if it's already a dictionary
+                if isinstance(metadata, dict):
+                    metadata_dict = metadata
+                else:
+                    metadata_dict = json.loads(metadata)
                 
                 col1, col2, col3 = st.columns([3, 2, 1])
                 with col1:
@@ -1256,7 +1260,13 @@ def advisor_page():
                 syllabus_result = cursor.fetchone()
                 if syllabus_result:
                     syllabus_content = syllabus_result[0]
-                    syllabus_metadata = json.loads(syllabus_result[1])
+                    syllabus_metadata_raw = syllabus_result[1]
+                    
+                    # Handle metadata - check if it's already a dictionary
+                    if isinstance(syllabus_metadata_raw, dict):
+                        syllabus_metadata = syllabus_metadata_raw
+                    else:
+                        syllabus_metadata = json.loads(syllabus_metadata_raw)
             
             # Get chat interactions for learning patterns
             cursor.execute("""
@@ -1320,7 +1330,12 @@ def advisor_page():
                     if chat_interactions:
                         prompt += "\nRECENT LEARNING INTERACTIONS:\n"
                         for i, chat in enumerate(chat_interactions[:5]):  # Limit to 5 to manage token count
-                            chat_data = json.loads(chat[0])
+                            # Handle chat data - check if it's already a dictionary
+                            chat_content = chat[0]
+                            if isinstance(chat_content, dict):
+                                chat_data = chat_content
+                            else:
+                                chat_data = json.loads(chat_content)
                             prompt += f"- Question: {chat_data.get('question', 'N/A')}\n"
                     
                     # Add syllabus context if available
