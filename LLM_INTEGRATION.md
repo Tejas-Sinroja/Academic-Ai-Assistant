@@ -1,68 +1,58 @@
-# LLM Integration: Groq
+# LLM Integration: OpenRouter
 
-This document outlines how Academic AI Assistant integrates with Groq's powerful language models to provide AI-powered features.
+This document outlines how Academic AI Assistant integrates with OpenRouter to provide access to powerful language models for AI-powered features.
 
-## Overview
+## LLM Integration Strategy
 
-Academic AI Assistant **exclusively** uses Groq for all LLM capabilities. The application does not depend on or use OpenAI or any other LLM provider.
+Academic AI Assistant **exclusively** uses OpenRouter for all LLM capabilities. The application does not depend directly on OpenAI or other LLM providers, instead accessing models through OpenRouter's unified API.
 
-## Why Groq?
+## Why OpenRouter?
 
-- **High Performance**: Groq's platform delivers extremely fast inference times, which is critical for a responsive educational assistant.
-- **Cost-Effective**: Groq provides competitive pricing for high-quality model inference.
-- **Powerful Models**: Groq hosts high-quality models like Llama3, which provide excellent performance for educational use cases.
+- **Model Flexibility**: OpenRouter provides access to multiple state-of-the-art models through a single API
+- **Cost Management**: OpenRouter offers competitive pricing and efficient routing options
+- **Powerful Models**: Access to a variety of high-quality models like Llama, Claude, and more
+- **Unified Integration**: Single API implementation to access multiple model providers
 
-## Implementation Details
+## Implementation
 
-The LLM integration is implemented in `src/LLM.py` using two main components:
+The application uses two approaches to working with OpenRouter:
 
-1. **ChatGroq**: For asynchronous chat completions
-2. **Groq Client**: For synchronous completions
+1. **OpenAI SDK**: For both synchronous and asynchronous completions via OpenRouter's OpenAI-compatible API
+2. **LangChain Integration**: For higher-level abstractions in RAG and other components
 
-The application uses the llama3-70b-8192 model, which provides excellent capabilities for:
-- Understanding and generating complex academic content
-- Providing personalized learning advice
-- Processing and summarizing lecture notes
+## Setting Up Your OpenRouter API Key
 
-## Setting Up Your Groq API Key
+To use the application, you'll need an OpenRouter API key:
 
-To use the application, you'll need a Groq API key:
-
-1. Sign up for an account at [groq.com](https://groq.com)
-2. Obtain your API key from the dashboard
-3. Add it to your `.env` file: `GROQ_API_KEY=your_api_key_here`
+1. Sign up for an account at [openrouter.ai](https://openrouter.ai)
+2. Generate an API key in your dashboard
+3. Add it to your `.env` file: `OPENROUTER_API_KEY=your_api_key_here`
 
 ## Troubleshooting
 
-If you encounter errors related to LLM functionality:
+If you're having issues with the LLM integration:
 
-1. Verify your Groq API key is correctly set in the `.env` file
-2. Check that you have internet connectivity
-3. Ensure you have the required packages installed: `groq` and `chatgroq`
+1. Verify your OpenRouter API key is correctly set in the `.env` file
+2. Ensure you have internet connectivity to reach OpenRouter's API
+3. Ensure you have the required packages installed: `openai` and any LangChain components
 
-## Technical Reference
+## Code Structure
 
-The main class in `src/LLM.py` is `GroqLLaMa`, which provides two primary methods:
+The main class in `src/LLM.py` is `OpenRouterLLM`, which provides two primary methods:
 
-- `async agenerate(messages, temperature)`: Asynchronous generation for chat interfaces
-- `generate(messages, temperature)`: Synchronous generation for forms and other blocking contexts
+- `generate(messages)`: Synchronous completion generation
+- `agenerate(messages)`: Asynchronous completion generation
 
-Both methods accept:
-- `messages`: A list of message dictionaries with "role" and "content" keys
-- `temperature`: Optional parameter to control randomness (0.0-1.0)
-
-Example usage:
+## Example Usage
 
 ```python
-from src.LLM import GroqLLaMa
+from src.LLM import OpenRouterLLM
 
-# Initialize with your API key
-llm = GroqLLaMa(api_key="your_groq_api_key")
+# Initialize the LLM
+llm = OpenRouterLLM(api_key="your_openrouter_api_key")
 
-# Generate a response
-response = llm.generate([
-    {"role": "user", "content": "Explain the concept of photosynthesis."}
-])
-
+# Generate a completion
+messages = [{"role": "user", "content": "Explain the quantum tunneling effect briefly."}]
+response = llm.generate(messages)
 print(response)
 ``` 

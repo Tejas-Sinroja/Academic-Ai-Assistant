@@ -39,16 +39,16 @@ def check_postgres():
         print(f"Error checking PostgreSQL: {e}")
         return False
 
-def check_groq_api_key():
-    """Check if Groq API key is set"""
-    groq_api_key = os.getenv("GROQ_API_KEY")
-    if not groq_api_key or groq_api_key == "your_groq_api_key":
-        print("✗ Groq API key not set in .env file.")
-        print("  This application requires a Groq API key to function properly.")
-        print("  Please set the GROQ_API_KEY value in your .env file.")
+def check_openrouter_api_key():
+    """Check if OpenRouter API key is set"""
+    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+    if not openrouter_api_key or openrouter_api_key == "your_openrouter_api_key":
+        print("✗ OpenRouter API key not set in .env file.")
+        print("  This application requires an OpenRouter API key to function properly.")
+        print("  Please set the OPENROUTER_API_KEY value in your .env file.")
         return False
     else:
-        print("✓ Groq API key found in environment variables.")
+        print("✓ OpenRouter API key found in environment variables.")
         return True
 
 def initialize_database():
@@ -90,8 +90,8 @@ def main():
         print("Please start your PostgreSQL server and try again.")
         sys.exit(1)
     
-    # Check if Groq API key is set
-    check_groq_api_key()
+    # Check if OpenRouter API key is set
+    check_openrouter_api_key()
     
     # Initialize database
     if not initialize_database():

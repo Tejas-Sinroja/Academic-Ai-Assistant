@@ -58,7 +58,7 @@ The PDF Chat feature allows you to have intelligent conversations with your stud
 
 - Python 3.8+
 - PostgreSQL 12+
-- Groq API key (for all LLM capabilities - this project does not use OpenAI)
+- OpenRouter API key (for all LLM capabilities - this project does not use OpenAI directly)
 - HuggingFace's all-MiniLM-L6-v2 model (automatically downloaded for embeddings)
 
 ## Installation
@@ -95,7 +95,7 @@ DB_USER=postgres
 DB_PASSWORD=postgres
 
 # LLM API Keys
-GROQ_API_KEY=your_groq_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 
 # Application Settings
 DEBUG=True
@@ -182,15 +182,15 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - FAISS for vector search capabilities 
 - HuggingFace for embedding models
 - Streamlit for the web interface
-- Groq for LLM API access
+- OpenRouter for LLM API access
 
 ## LLM Integration
 
-The application exclusively uses Groq's powerful LLMs (via ChatGroq) to power all AI features:
+The application exclusively uses OpenRouter's powerful LLMs to power all AI features:
 
 1. **Chat Interface**: General academic assistance on the home page
 2. **Content Processing**: Convert lecture notes and readings into structured study materials
 3. **Personalized Advice**: Generate tailored studying advice based on learning style and profile
 4. **Document Q&A**: Answer questions about your study materials with RAG-enhanced precision
 
-You'll need a Groq API key to use these features. The application is designed to work with Groq's models for optimal performance.
+You'll need an OpenRouter API key to use these features. The application is designed to work with models available through OpenRouter for optimal performance.
