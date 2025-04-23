@@ -1,7 +1,6 @@
 streamlit
 langchain
-groq
-langchain-groq
+openai
 langgraph
 psycopg2-binary
 python-dotenv

@@ -656,18 +656,18 @@ def get_notewriter():
         Notewriter: An instance of the Notewriter agent
     """
     # Initialize the LLM
-    from src.LLM import GroqLLaMa
+    from src.LLM import OpenRouterLLM
     import os
     
     # Get the API key from environment
-    api_key = os.getenv("GROQ_API_KEY", "")
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
     
     # If API key is not available or is the default placeholder, return None
-    if not api_key or api_key == "your_groq_api_key":
+    if not api_key or api_key == "your_openrouter_api_key":
         # This is handled by the Streamlit app which will check for API key
         # availability and prompt the user if needed
         return None
     
     # Initialize the notewriter with the LLM
-    llm = GroqLLaMa(api_key)
+    llm = OpenRouterLLM(api_key)
     return Notewriter(llm) 

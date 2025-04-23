@@ -8,7 +8,7 @@ import pandas as pd
 from pathlib import Path
 import sys
 import asyncio
-from src.LLM import GroqLLaMa  # Import the LLM class
+from src.LLM import OpenRouterLLM  # Import the updated LLM class
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
@@ -342,12 +342,12 @@ def notewriter_page():
     """)
     
     # Get API key from .env or session state
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key or api_key == "your_groq_api_key":
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if not api_key or api_key == "your_openrouter_api_key":
         if "api_key" in st.session_state:
             api_key = st.session_state.api_key
         else:
-            api_key = st.text_input("Enter Groq API Key (required for AI processing):", type="password")
+            api_key = st.text_input("Enter OpenRouter API Key (required for AI processing):", type="password")
             if api_key:
                 st.session_state.api_key = api_key
     
@@ -413,7 +413,7 @@ def notewriter_page():
             if 'user_id' not in st.session_state:
                 st.warning("Please set up your profile first on the Home page.")
             elif not api_key:
-                st.warning("Please enter your Groq API key to enable AI processing.")
+                st.warning("Please enter your OpenRouter API key to enable AI processing.")
             elif source_type == "Text Input" and not content:
                 st.warning("Please enter some content to process.")
             elif source_type == "Web Page" and not source_url:
@@ -444,7 +444,7 @@ def notewriter_page():
                 notewriter = get_notewriter()
                 
                 if not notewriter:
-                    st.error("Failed to initialize the Notewriter agent. Please check your Groq API key.")
+                    st.error("Failed to initialize the Notewriter agent. Please check your OpenRouter API key.")
                     return
                 
                 # Process content using the appropriate method
@@ -946,12 +946,12 @@ def advisor_page():
         return
     
     # Get API key from .env or session state
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key or api_key == "your_groq_api_key":
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if not api_key or api_key == "your_openrouter_api_key":
         if "api_key" in st.session_state:
             api_key = st.session_state.api_key
         else:
-            api_key = st.text_input("Enter Groq API Key (required for AI advice):", type="password")
+            api_key = st.text_input("Enter OpenRouter API Key (required for AI advice):", type="password")
             if api_key:
                 st.session_state.api_key = api_key
     
@@ -1200,7 +1200,7 @@ def advisor_page():
     
     if st.button("Get Comprehensive Advice") and user_question:
         if not api_key:
-            st.warning("Please enter your Groq API key to enable AI advice.")
+            st.warning("Please enter your OpenRouter API key to enable AI advice.")
         else:
             # Gather comprehensive student data for context
             conn = init_connection()
@@ -1286,7 +1286,7 @@ def advisor_page():
             with st.spinner("Generating comprehensive academic advice..."):
                 try:
                     # Initialize LLM
-                    llm = GroqLLaMa(api_key)
+                    llm = OpenRouterLLM(api_key)
                     
                     # Create a comprehensive context-rich prompt
                     prompt = f"""
@@ -1460,12 +1460,12 @@ def pdf_chat_page():
         return
     
     # Get API key from .env or session state
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key or api_key == "your_groq_api_key":
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if not api_key or api_key == "your_openrouter_api_key":
         if "api_key" in st.session_state:
             api_key = st.session_state.api_key
         else:
-            api_key = st.text_input("Enter Groq API Key (required for chat):", type="password")
+            api_key = st.text_input("Enter OpenRouter API Key (required for chat):", type="password")
             if api_key:
                 st.session_state.api_key = api_key
     
@@ -1720,7 +1720,7 @@ def pdf_chat_page():
                         # Pre-initialize pipeline if API key is available
                         if api_key:
                             with st.spinner("Building knowledge retrieval system..."):
-                                llm = GroqLLaMa(api_key)
+                                llm = OpenRouterLLM(api_key)
                                 qa_chain = create_rag_pipeline(
                                     all_documents,
                                     f"Multi-Source ({len(sources_list)} documents)",
@@ -1773,7 +1773,7 @@ def pdf_chat_page():
                 
                 try:
                     # Initialize LLM
-                    llm = GroqLLaMa(api_key)
+                    llm = OpenRouterLLM(api_key)
                     
                     # Get or create RAG pipeline for this content
                     pipeline_key = f"rag_{hash(st.session_state.chat_content_name)}"
@@ -1871,7 +1871,7 @@ def pdf_chat_page():
                         "content": error_msg
                     })
         elif not api_key and user_question:
-            st.warning("Please enter your Groq API key to enable chat.")
+            st.warning("Please enter your OpenRouter API key to enable chat.")
     else:
         st.info("Upload a PDF, select a saved note, or build a multi-source knowledge base to start chatting.")
         
@@ -1964,7 +1964,7 @@ def create_rag_pipeline(content, content_name, llm):
         input_variables=["context", "question"]
     )
     
-    # If we have a custom GroqLLaMa instance, use its chat_model attribute
+    # If we have a custom OpenRouterLLM instance, use its chat_model attribute
     if hasattr(llm, 'chat_model'):
         llm_for_chain = llm.chat_model
     else:

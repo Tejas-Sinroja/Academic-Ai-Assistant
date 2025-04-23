@@ -1,6 +1,5 @@
-import groq
+from openai import OpenAI
 import asyncio
-from langchain_groq import ChatGroq
 from typing import List, Dict, Optional
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -8,46 +7,35 @@ from langchain_core.prompts import ChatPromptTemplate
 
 class LLMConfig:
     """Configuration settings for the LLM."""
-    model: str = "llama3-70b-8192"  # Updated to use Groq's llama3 model
-    max_tokens: int = 1024
-    default_temp: float = 0.5
+    model: str = "meta-llama/llama-4-scout:free"  # Updated to use OpenRouter model
+    # max_tokens: int = 1024
+    # default_temp: float = 0.5
 
-class GroqLLaMa:
+class OpenRouterLLM:
     """
-    A wrapper class for ChatGroq to maintain backward compatibility.
-    This class provides a bridge between the existing codebase and LangChain's expectations.
+    A wrapper class for OpenRouter via OpenAI SDK.
+    This class provides access to OpenRouter models.
     """
 
     def __init__(self, api_key: str):
-        """Initialize GroqLLaMa with API key.
+        """Initialize OpenRouterLLM with API key.
 
         Args:
-            api_key (str): Groq Cloud API authentication key
+            api_key (str): OpenRouter API key
         """
         self.config = LLMConfig()
-        # Create a ChatGroq model that implements the Runnable interface
-        self.chat_model = ChatGroq(
-            model_name=self.config.model,
+        # Create OpenAI client configured for OpenRouter
+        self.client = OpenAI(
             api_key=api_key,
-            max_tokens=self.config.max_tokens,
-            temperature=self.config.default_temp
+            base_url="https://openrouter.ai/api/v1"
         )
-        # Keep the direct groq client for backward compatibility
-        self.groq_client = groq.Client(api_key=api_key)
         
-    def __getattr__(self, name):
-        """
-        Pass through any attribute access to the underlying ChatGroq model.
-        This allows this class to behave like the ChatGroq model for LangChain compatibility.
-        """
-        return getattr(self.chat_model, name)
-    
     async def agenerate(
         self,
         messages: List[Dict],
         temperature: Optional[float] = None
     ) -> str:
-        """Generate text using Groq's model via ChatGroq.
+        """Generate text using OpenRouter's model.
 
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -56,15 +44,15 @@ class GroqLLaMa:
         Returns:
             str: Generated text response
         """
-        # Use the groq client directly for async operation
+        # Use the OpenAI client configured for OpenRouter
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: self.groq_client.chat.completions.create(
+            lambda: self.client.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
-                temperature=temperature or self.config.default_temp,
-                max_tokens=self.config.max_tokens
+                # temperature=temperature or self.config.default_temp,
+                # max_tokens=self.config.max_tokens
             )
         )
         
@@ -84,12 +72,11 @@ class GroqLLaMa:
         Returns:
             str: Generated text response
         """
-        # For direct usage outside of LangChain's Runnable interface
-        response = self.groq_client.chat.completions.create(
+        response = self.client.chat.completions.create(
             model=self.config.model,
             messages=messages,
-            temperature=temperature or self.config.default_temp,
-            max_tokens=self.config.max_tokens
+            # temperature=temperature or self.config.default_temp,
+            # max_tokens=self.config.max_tokens
         )
         
         return response.choices[0].message.content
