@@ -6,6 +6,7 @@ This agent is responsible for:
 2. Generating comprehensive notes
 3. Creating study materials based on learning style
 4. Summarizing and organizing academic content
+5. Researching topics automatically and generating structured notes
 """
 
 from typing import Dict, List, Any, Optional, Tuple, Union
@@ -35,10 +36,10 @@ if module_path not in sys.path:
     
 # Then import the extractors module
 try:
-    from extractors import extract_website_content, extract_pdf_content, extract_youtube_content
+    from extractors import extract_website_content, extract_pdf_content, extract_youtube_content, research_topic
 except ImportError:
     # Fallback to importing with full path
-    from src.extractors import extract_website_content, extract_pdf_content, extract_youtube_content
+    from src.extractors import extract_website_content, extract_pdf_content, extract_youtube_content, research_topic
 
 # Load environment variables
 load_dotenv()
@@ -87,10 +88,11 @@ Your notes should transform the audio-visual content into well-structured writte
 class Notewriter:
     """Notewriter Agent for academic content processing"""
     
-    def __init__(self, llm):
+    def __init__(self, llm, openrouter_llm=None):
         """Initialize the notewriter agent"""
         self.conn = self._init_connection()
         self.llm = llm
+        self.openrouter_llm = openrouter_llm  # For mindmap generation
     
     def _init_connection(self):
         """Create a connection to the PostgreSQL database"""
@@ -364,7 +366,7 @@ class Notewriter:
         Extract content from various sources
         
         Args:
-            source_type (str): Type of source ('web', 'pdf', 'youtube', 'text')
+            source_type (str): Type of source ('web', 'pdf', 'youtube', 'text', 'topic')
             source (str): URL, file path, or raw text
             
         Returns:
@@ -388,6 +390,11 @@ class Notewriter:
             elif source_type == "text":
                 # Direct text input - just return it
                 return source
+            elif source_type == "topic":
+                # Process the topic using the research functionality
+                depth = "deep" if source.get("depth") == "deep" else "ordinary"
+                research_results = await research_topic(source.get("topic"), depth)
+                return research_results["combined_content"]
             else:
                 return (False, f"Unsupported source type: {source_type}")
         except Exception as e:
@@ -399,8 +406,8 @@ class Notewriter:
         
         Args:
             student_id (int): The student ID
-            source_type (str): The type of source ('text', 'web', 'youtube', 'pdf')
-            source (str or bytes): The source content or URL
+            source_type (str): The type of source ('text', 'web', 'youtube', 'pdf', 'topic')
+            source (str or dict): The source content, URL, or topic information
             title (str): The note title
             subject (str): The subject of the note
             focus_area (str, optional): Specific focus area within the subject
@@ -484,6 +491,29 @@ class Notewriter:
                 
                 Format the notes in clean Markdown.
                 """
+            elif source_type == "topic":
+                # For topic-based research, we have a more specialized prompt
+                system_message = f"""
+                Process the following research on {subject} into comprehensive study notes.
+                {focus_instruction}
+                Tailor the output for a student with a {learning_style} learning style.
+                
+                This research includes content from multiple sources including web pages and YouTube videos.
+                
+                Create well-structured, comprehensive study notes that:
+                1. Begin with an overview of {subject}
+                2. Organize the content into logical sections with clear headings
+                3. Identify and highlight key concepts, definitions, and examples
+                4. Synthesize information from multiple sources into a coherent narrative
+                5. Include source citations for important information
+                6. End with a summary of the most important points
+                7. Add learning recommendations specifically for {learning_style} learners
+                
+                Format the notes in clean Markdown, using appropriate heading levels, bullet points, 
+                and emphasis to create a visually structured document.
+                
+                BE SURE TO CITE THE SOURCES when presenting information from specific websites or videos.
+                """
             else:  # text
                 system_message = f"""
                 Process the following {subject} content into comprehensive study notes.
@@ -509,7 +539,11 @@ class Notewriter:
             processed_content = self.llm.generate(messages)
             
             # Determine source URL for storage
-            source_url = source if source_type in ["web", "youtube"] else None
+            source_url = None
+            if source_type in ["web", "youtube"]:
+                source_url = source
+            elif source_type == "topic" and isinstance(source, dict):
+                source_url = f"Research on: {source.get('topic')}"
             
             # Save the note
             note_data = {
@@ -526,7 +560,8 @@ class Notewriter:
             if note_id:
                 return {
                     "success": True,
-                    "note_id": note_id
+                    "note_id": note_id,
+                    "content": processed_content  # Return the content for mindmap generation
                 }
             else:
                 return {
@@ -540,111 +575,83 @@ class Notewriter:
                 "success": False,
                 "error": str(e)
             }
+    
+    async def process_topic(self, student_id, topic, search_depth, title, subject, focus_area="", tags="", learning_style="Visual"):
+        """
+        Research a topic and generate comprehensive notes
+        
+        Args:
+            student_id (int): The student ID
+            topic (str): The topic to research
+            search_depth (str): "ordinary" or "deep" search
+            title (str): The note title
+            subject (str): The subject of the note
+            focus_area (str, optional): Specific focus area within the subject
+            tags (str, optional): Comma-separated tags
+            learning_style (str, optional): The student's learning style
+            
+        Returns:
+            Dict: Result information including note ID and status
+        """
+        try:
+            # Prepare the topic source information
+            source = {
+                "topic": topic,
+                "depth": search_depth
+            }
+            
+            # Process the topic as a source
+            result = await self.process_source(
+                student_id=student_id,
+                source_type="topic",
+                source=source,
+                title=title,
+                subject=subject,
+                focus_area=focus_area,
+                tags=tags,
+                learning_style=learning_style
+            )
+            
+            return result
+        except Exception as e:
+            print(f"Error in process_topic: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def generate_mindmap(self, note_content: str) -> str:
+        """
+        Generate a mindmap outline from note content
+        
+        Args:
+            note_content (str): The note content to convert to a mindmap
+            
+        Returns:
+            str: Markdown-formatted mindmap outline
+        """
+        try:
+            if not self.openrouter_llm:
+                return "OpenRouter LLM not available for mindmap generation"
+            
+            # Create a specialized prompt for the OpenRouter LLM
+            messages = [
+                {"role": "system", "content": "You are a specialized tool that converts academic notes into mindmap outlines in Markdown format. Create a hierarchical outline using '- ' for the main level and indentation with '    ' for sublevel items. Each branch should represent a key concept with related details as subbranches."},
+                {"role": "user", "content": f"Convert these notes into a comprehensive mindmap outline in Markdown format:\n\n{note_content[:4000]}"}  # Limit size to avoid token limits
+            ]
+            
+            # Generate the mindmap outline using OpenRouter
+            mindmap_content = self.openrouter_llm.generate(messages)
+            
+            return mindmap_content
+        except Exception as e:
+            print(f"Error generating mindmap: {str(e)}")
+            return f"Error generating mindmap: {str(e)}"
             
     # Close the database connection when done
     def __del__(self):
         if hasattr(self, 'conn') and self.conn:
             self.conn.close()
-    
-    def process_content(self, content: str, student_id: int, output_format: str, 
-                         learning_style: str) -> Dict[str, Any]:
-        """
-        Process academic content and generate study materials
-        
-        This is a placeholder implementation. In a real system, this would:
-        1. Use LLMs to analyze and process the content
-        2. Generate material based on the student's learning style
-        3. Format output according to the requested format
-        """
-        # This is a simplified implementation - a real version would use LLMs
-        
-        # Generate title from content
-        title = f"Notes on {content.split()[0:3]}" if content else "Untitled Notes"
-        
-        # Generate summary - in real implementation, this would use LLM summarization
-        summary = f"Summary of the content: {content[:100]}..." if len(content) > 100 else content
-        
-        # Generate outline - in real implementation, this would extract key points
-        outline_points = [
-            "Introduction to the topic",
-            "Key concept #1",
-            "Key concept #2",
-            "Applications and examples",
-            "Conclusion and summary"
-        ]
-        
-        # Adjust based on learning style
-        style_adjustments = {}
-        if learning_style == "Visual":
-            style_adjustments = {
-                "recommendations": [
-                    "Create a mind map to visualize relationships between concepts",
-                    "Use color coding for different themes in your notes",
-                    "Draw diagrams to represent processes"
-                ]
-            }
-        elif learning_style == "Auditory":
-            style_adjustments = {
-                "recommendations": [
-                    "Record yourself reading these notes aloud",
-                    "Create verbal mnemonics for key points",
-                    "Discuss these concepts with study partners"
-                ]
-            }
-        elif learning_style == "Reading/Writing":
-            style_adjustments = {
-                "recommendations": [
-                    "Rewrite these notes in your own words",
-                    "Create written summaries after each study session",
-                    "Practice explaining concepts in writing"
-                ]
-            }
-        elif learning_style == "Kinesthetic":
-            style_adjustments = {
-                "recommendations": [
-                    "Create physical flashcards you can manipulate",
-                    "Take short breaks for movement between study sessions",
-                    "Role-play or act out processes when possible"
-                ]
-            }
-        
-        # Format based on requested output
-        formatted_output = {}
-        if output_format == "Comprehensive Notes":
-            formatted_output = {
-                "title": title,
-                "content": content,
-                "summary": summary,
-                "outline": outline_points,
-                "learning_recommendations": style_adjustments.get("recommendations", [])
-            }
-        elif output_format == "Brief Summary":
-            formatted_output = {
-                "title": title,
-                "summary": summary,
-                "key_points": outline_points,
-                "learning_recommendations": style_adjustments.get("recommendations", [])
-            }
-        elif output_format == "Flashcards":
-            # Generate example flashcards from content
-            formatted_output = {
-                "title": title,
-                "flashcards": [
-                    {"front": "What is the main topic?", "back": title},
-                    {"front": "Summarize the key concept", "back": summary},
-                    {"front": "List an application", "back": "This would depend on the specific content."}
-                ],
-                "learning_recommendations": style_adjustments.get("recommendations", [])
-            }
-        elif output_format == "Mind Map":
-            formatted_output = {
-                "title": title,
-                "central_concept": title,
-                "branches": outline_points,
-                "learning_recommendations": style_adjustments.get("recommendations", [])
-            }
-        
-        return formatted_output
 
 # Add helper function to get the notewriter instance
 def get_notewriter():
@@ -656,18 +663,26 @@ def get_notewriter():
         Notewriter: An instance of the Notewriter agent
     """
     # Initialize the LLM
-    from src.LLM import GroqLLaMa
+    from src.LLM import GroqLLaMa, OpenRouterLLM
     import os
     
-    # Get the API key from environment
-    api_key = os.getenv("GROQ_API_KEY", "")
+    # Get the API keys from environment
+    groq_api_key = os.getenv("GROQ_API_KEY", "")
+    openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
     
-    # If API key is not available or is the default placeholder, return None
-    if not api_key or api_key == "your_groq_api_key":
+    # If Groq API key is not available or is the default placeholder, return None
+    if not groq_api_key or groq_api_key == "your_groq_api_key":
         # This is handled by the Streamlit app which will check for API key
         # availability and prompt the user if needed
         return None
     
-    # Initialize the notewriter with the LLM
-    llm = GroqLLaMa(api_key)
-    return Notewriter(llm) 
+    # Initialize the LLMs
+    groq_llm = GroqLLaMa(groq_api_key)
+    openrouter_llm = None
+    
+    # Add OpenRouter LLM if key is available
+    if openrouter_api_key and openrouter_api_key != "your_openrouter_api_key":
+        openrouter_llm = OpenRouterLLM(openrouter_api_key)
+    
+    # Initialize the notewriter with both LLMs
+    return Notewriter(groq_llm, openrouter_llm) 

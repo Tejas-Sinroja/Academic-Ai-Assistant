@@ -342,20 +342,22 @@ def notewriter_page():
     """)
     
     # Get API key from .env or session state
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key or api_key == "your_groq_api_key":
+    groq_api_key = os.getenv("GROQ_API_KEY", "")
+    openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
+    
+    if not groq_api_key or groq_api_key == "your_groq_api_key":
         if "api_key" in st.session_state:
-            api_key = st.session_state.api_key
+            groq_api_key = st.session_state.api_key
         else:
-            api_key = st.text_input("Enter Groq API Key (required for AI processing):", type="password")
-            if api_key:
-                st.session_state.api_key = api_key
+            groq_api_key = st.text_input("Enter Groq API Key (required for AI processing):", type="password")
+            if groq_api_key:
+                st.session_state.api_key = groq_api_key
     
     # Source type selection
     st.subheader("Select Content Source")
     source_type = st.radio(
         "Choose your source type:",
-        ["Text Input", "Web Page", "YouTube Video"],
+        ["Research a Topic", "Text Input", "Web Page", "YouTube Video"],
         horizontal=True
     )
     
@@ -365,15 +367,42 @@ def notewriter_page():
         subject = st.text_input("Subject")
         
         # Source content based on selected type
-        if source_type == "Text Input":
+        if source_type == "Research a Topic":
+            content = None
+            source_url = None
+            uploaded_file = None
+            
+            topic = st.text_input("Enter the topic to research:", placeholder="e.g., Quantum Computing, Renaissance Art, Climate Change")
+            search_depth = st.radio(
+                "Research Depth:",
+                ["Ordinary", "Deep Search"],
+                horizontal=True,
+                help="Deep Search will gather more sources for a more comprehensive result but takes longer"
+            )
+            
+            st.info("""
+            The Notewriter agent will automatically:
+            1. Search the web for information on this topic
+            2. Find relevant YouTube videos with transcripts
+            3. Extract and combine the content
+            4. Generate comprehensive notes with source citations
+            """)
+            
+        elif source_type == "Text Input":
             content = st.text_area("Enter lecture content, readings, or notes to process", height=300)
             source_url = None
             uploaded_file = None
+            topic = None
+            search_depth = None
+            
         elif source_type == "Web Page":
             content = None
             source_url = st.text_input("Enter webpage URL:")
             st.info("The Notewriter will extract and process content from the webpage.")
             uploaded_file = None
+            topic = None
+            search_depth = None
+            
         elif source_type == "YouTube Video":
             content = None
             source_url = st.text_input("Enter YouTube video URL:")
@@ -392,13 +421,15 @@ def notewriter_page():
             Some videos, especially newer ones or those in certain languages, may not have transcripts available.
             """)
             uploaded_file = None
+            topic = None
+            search_depth = None
         
         # Additional options
         col1, col2, col3 = st.columns(3)
         with col1:
             output_format = st.selectbox(
                 "Output Format",
-                ["Comprehensive Notes", "Brief Summary", "Flashcards", "Mind Map"]
+                ["Comprehensive Notes", "Brief Summary", "Mind Map"]
             )
         with col2:
             focus_area = st.text_input("Focus Area (optional)", 
@@ -412,7 +443,7 @@ def notewriter_page():
         if submit:
             if 'user_id' not in st.session_state:
                 st.warning("Please set up your profile first on the Home page.")
-            elif not api_key:
+            elif not groq_api_key:
                 st.warning("Please enter your Groq API key to enable AI processing.")
             elif source_type == "Text Input" and not content:
                 st.warning("Please enter some content to process.")
@@ -420,8 +451,8 @@ def notewriter_page():
                 st.warning("Please enter a webpage URL.")
             elif source_type == "YouTube Video" and not source_url:
                 st.warning("Please enter a YouTube video URL.")
-            elif source_type == "PDF Document" and not uploaded_file:
-                st.warning("Please upload a PDF document.")
+            elif source_type == "Research a Topic" and not topic:
+                st.warning("Please enter a topic to research.")
             elif not title or not subject:
                 st.warning("Please provide both a title and subject for your notes.")
             else:
@@ -460,7 +491,50 @@ def notewriter_page():
                         elif source_type == "YouTube Video":
                             source_data = source_url
                             source_type_code = "youtube"
+                        elif source_type == "Research a Topic":
+                            # Convert search_depth selection to format expected by the function
+                            depth = "deep" if search_depth == "Deep Search" else "ordinary"
+                            # Use the specialized topic processing method
+                            result = asyncio.run(notewriter.process_topic(
+                                student_id=st.session_state['user_id'],
+                                topic=topic,
+                                search_depth=depth,
+                                title=title,
+                                subject=subject,
+                                focus_area=focus_area,
+                                tags=tags,
+                                learning_style=learning_style
+                            ))
+                            
+                            # Handle result specially since we already have it
+                            if result["success"]:
+                                st.success(f"Research on '{topic}' completed and notes saved successfully!")
+                                
+                                # Store the note ID in session state for viewing
+                                st.session_state['selected_note_id'] = result["note_id"]
+                                
+                                # If Mind Map format is selected, generate and show the mindmap
+                                if output_format == "Mind Map":
+                                    if notewriter.openrouter_llm:
+                                        with st.spinner("Generating Mind Map visualization..."):
+                                            mindmap_content = notewriter.generate_mindmap(result["content"])
+                                            
+                                            # Display the mindmap
+                                            st.subheader("Mind Map Visualization")
+                                            st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
+                                            
+                                            # Use the streamlit-markmap component to visualize
+                                            from streamlit_markmap import markmap
+                                            markmap(mindmap_content, height=600)
+                                    else:
+                                        st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
+                            else:
+                                st.error(f"Error: {result['error']}")
+                            
+                            # Skip the rest of the processing since we've already handled the topic research
+                            return
                         
+                        # For non-topic sources, continue with regular processing
                         # Try a specific YouTube validation if needed
                         if source_type_code == "youtube":
                             if not validators.url(source_data):
@@ -491,6 +565,22 @@ def notewriter_page():
                             
                             # Store the note ID in session state for viewing
                             st.session_state['selected_note_id'] = result["note_id"]
+                            
+                            # If Mind Map format is selected, generate and show the mindmap
+                            if output_format == "Mind Map":
+                                if notewriter.openrouter_llm:
+                                    with st.spinner("Generating Mind Map visualization..."):
+                                        mindmap_content = notewriter.generate_mindmap(result["content"])
+                                        
+                                        # Display the mindmap
+                                        st.subheader("Mind Map Visualization")
+                                        st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
+                                        
+                                        # Use the streamlit-markmap component to visualize
+                                        from streamlit_markmap import markmap
+                                        markmap(mindmap_content, height=600)
+                                else:
+                                    st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
                         else:
                             # Special handling for YouTube extraction failures
                             if source_type_code == "youtube":
@@ -533,183 +623,210 @@ def notewriter_page():
                             # If extraction failed but we have direct content, still try to save it
                             if source_type == "Text Input":
                                 # Save original content
-                                tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
-                                note_id = notewriter.add_note(
-                                    st.session_state['user_id'],
-                                    {
-                                        "title": title,
-                                        "content": content,
-                                        "subject": subject,
-                                        "tags": tag_list
-                                    }
-                                )
+                                tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
                                 
-                                if note_id:
-                                    st.info("Original content saved without AI processing.")
-                                    st.session_state['selected_note_id'] = note_id
-                        
+                                note_data = {
+                                    "title": title,
+                                    "content": content,
+                                    "subject": subject,
+                                    "tags": tag_list,
+                                    "source_type": "text",
+                                    "source_url": None
+                                }
+                                
+                                if notewriter.add_note(st.session_state['user_id'], note_data):
+                                    st.info("Original content was saved as a note even though AI processing failed.")
+                    
                     except Exception as e:
-                        st.error(f"Error: {str(e)}")
-                        
-                        # Try to save raw content as fallback
-                        if source_type == "Text Input":
-                            conn = init_connection()
-                            cursor = conn.cursor()
-                            
-                            # Parse tags
-                            tag_list = [tag.strip() for tag in tags.split(',')] if tags else []
-                            
-                            cursor.execute("""
-                                INSERT INTO notes (student_id, title, content, subject, tags)
-                                VALUES (%s, %s, %s, %s, %s) RETURNING id
-                            """, (st.session_state['user_id'], title, content, subject, tag_list))
-                            
-                            note_id = cursor.fetchone()[0]
-                            conn.commit()
-                            cursor.close()
-                            conn.close()
-                            
-                            st.info("Original content saved without AI processing.")
-                            st.session_state['selected_note_id'] = note_id
+                        st.error(f"An error occurred: {str(e)}")
+                        import traceback
+                        st.error(traceback.format_exc())
     
     # Display saved notes
-    st.markdown("---")
-    st.subheader("Your Saved Notes")
+    st.subheader("Your Notes")
     
     if 'user_id' in st.session_state:
-        conn = init_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, title, subject, created_at 
-            FROM notes 
-            WHERE student_id = %s
-            ORDER BY created_at DESC
-        """, (st.session_state['user_id'],))
-        
-        notes = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        if notes:
-            notes_df = pd.DataFrame(notes, columns=["ID", "Title", "Subject", "Created At"])
-            notes_df["Created At"] = pd.to_datetime(notes_df["Created At"]).dt.strftime("%Y-%m-%d %H:%M")
+        notewriter = get_notewriter()
+        if notewriter:
+            notes = notewriter.get_notes(st.session_state['user_id'])
             
-            # Display as table with view buttons
-            for index, row in notes_df.iterrows():
-                col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 1, 1])
-                with col1:
-                    st.write(row["Title"])
-                with col2:
-                    st.write(row["Subject"])
-                with col3:
-                    st.write(row["Created At"])
-                with col4:
-                    if st.button("View", key=f"view_note_{row['ID']}"):
-                        st.session_state['selected_note_id'] = row["ID"]
-                        # Clear delete confirmation flag if set
-                        if 'delete_confirmation' in st.session_state:
-                            del st.session_state['delete_confirmation']
-                with col5:
-                    if st.button("Delete", key=f"delete_note_{row['ID']}"):
-                        st.session_state['delete_note_id'] = row["ID"]
-                        st.session_state['delete_confirmation'] = False
-            
-            # Show delete confirmation
-            if 'delete_note_id' in st.session_state and 'delete_confirmation' in st.session_state and not st.session_state['delete_confirmation']:
-                note_id = st.session_state['delete_note_id']
-                st.warning(f"Are you sure you want to delete this note? This action cannot be undone.")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Yes, Delete", key=f"confirm_delete_{note_id}"):
-                        # Import the notewriter agent
-                        notewriter = get_notewriter()
+            if not notes:
+                st.info("You don't have any notes yet. Create one using the form above.")
+            else:
+                # Create tabs for all notes and filtering by subject
+                all_tab, subject_tab, search_tab = st.tabs(["All Notes", "Filter by Subject", "Search"])
+                
+                with all_tab:
+                    for note in notes[:10]:  # Show most recent 10 notes
+                        with st.expander(f"{note['title']} ({note['subject']}) - {note['created_at'].strftime('%Y-%m-%d')}"):
+                            # Show a preview of the note
+                            st.markdown(note['content'][:500] + "..." if len(note['content']) > 500 else note['content'])
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button(f"View Full Note", key=f"view_{note['id']}"):
+                                    st.session_state['selected_note_id'] = note['id']
+                                    st.rerun()
+                            
+                            with col2:
+                                if st.button(f"Delete Note", key=f"delete_{note['id']}"):
+                                    if notewriter.delete_note(note['id'], st.session_state['user_id']):
+                                        st.success("Note deleted successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error("Failed to delete note.")
+                
+                with subject_tab:
+                    # Get unique subjects
+                    subjects = sorted(set(note['subject'] for note in notes if note['subject']))
+                    
+                    selected_subject = st.selectbox("Select Subject", subjects)
+                    
+                    if selected_subject:
+                        subject_notes = [note for note in notes if note['subject'] == selected_subject]
                         
-                        if notewriter and notewriter.delete_note(note_id, st.session_state['user_id']):
-                            st.success("Note deleted successfully!")
-                            st.session_state['delete_confirmation'] = True
-                            
-                            # Remove the selected note if it's the one being deleted
-                            if 'selected_note_id' in st.session_state and st.session_state['selected_note_id'] == note_id:
-                                del st.session_state['selected_note_id']
-                            
-                            # Refresh the page
-                            st.rerun()
+                        for note in subject_notes:
+                            with st.expander(f"{note['title']} - {note['created_at'].strftime('%Y-%m-%d')}"):
+                                # Show a preview of the note
+                                st.markdown(note['content'][:500] + "..." if len(note['content']) > 500 else note['content'])
+                                
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button(f"View Full Note", key=f"view_subj_{note['id']}"):
+                                        st.session_state['selected_note_id'] = note['id']
+                                        st.rerun()
+                                
+                                with col2:
+                                    if st.button(f"Delete Note", key=f"delete_subj_{note['id']}"):
+                                        if notewriter.delete_note(note['id'], st.session_state['user_id']):
+                                            st.success("Note deleted successfully!")
+                                            st.rerun()
+                                        else:
+                                            st.error("Failed to delete note.")
+                
+                with search_tab:
+                    search_query = st.text_input("Search your notes:", placeholder="Enter keywords to search")
+                    
+                    if search_query:
+                        search_results = notewriter.search_notes(st.session_state['user_id'], search_query)
+                        
+                        if not search_results:
+                            st.info(f"No notes found matching '{search_query}'")
                         else:
-                            st.error("Failed to delete note.")
-                with col2:
-                    if st.button("Cancel", key=f"cancel_delete_{note_id}"):
-                        # Clear deletion state
-                        del st.session_state['delete_note_id']
-                        del st.session_state['delete_confirmation']
-                        st.rerun()
+                            st.write(f"Found {len(search_results)} notes matching '{search_query}'")
+                            
+                            for note in search_results:
+                                with st.expander(f"{note['title']} ({note['subject']}) - {note['created_at'].strftime('%Y-%m-%d')}"):
+                                    # Show a preview of the note
+                                    st.markdown(note['content'][:500] + "..." if len(note['content']) > 500 else note['content'])
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        if st.button(f"View Full Note", key=f"view_search_{note['id']}"):
+                                            st.session_state['selected_note_id'] = note['id']
+                                            st.rerun()
+                                    
+                                    with col2:
+                                        if st.button(f"Delete Note", key=f"delete_search_{note['id']}"):
+                                            if notewriter.delete_note(note['id'], st.session_state['user_id']):
+                                                st.success("Note deleted successfully!")
+                                                st.rerun()
+                                            else:
+                                                st.error("Failed to delete note.")
+    
+    # View selected note in full
+    if 'selected_note_id' in st.session_state and 'user_id' in st.session_state:
+        notewriter = get_notewriter()
+        if notewriter:
+            note = notewriter.get_note_by_id(st.session_state['selected_note_id'], st.session_state['user_id'])
             
-            # Show selected note
-            if 'selected_note_id' in st.session_state:
-                conn = init_connection()
-                cursor = conn.cursor()
+            if note:
+                st.subheader(f"📄 {note['title']}")
                 
-                cursor.execute("""
-                    SELECT title, content, subject, tags, source_type, source_url, id
-                    FROM notes
-                    WHERE id = %s AND student_id = %s
-                """, (st.session_state['selected_note_id'], st.session_state['user_id']))
+                # Note metadata
+                metadata_col1, metadata_col2, metadata_col3 = st.columns(3)
+                with metadata_col1:
+                    st.write(f"**Subject:** {note['subject']}")
+                with metadata_col2:
+                    st.write(f"**Created:** {note['created_at'].strftime('%Y-%m-%d')}")
+                with metadata_col3:
+                    if note.get('tags'):
+                        tags_list = note['tags'] if isinstance(note['tags'], list) else [note['tags']]
+                        st.write(f"**Tags:** {', '.join(tags_list)}")
                 
-                note = cursor.fetchone()
-                cursor.close()
-                conn.close()
+                # Tabs for viewing in different formats
+                view_tab, mindmap_tab, edit_tab = st.tabs(["View Note", "Mind Map View", "Edit Note"])
                 
-                if note:
-                    st.markdown("---")
-                    # Add note actions in a row
-                    note_id = note[6]  # ID is at index 6 now
-                    col1, col2 = st.columns([6, 1])
-                    with col1:
-                        st.subheader(f"📄 {note[0]}")
-                    with col2:
-                        if st.button("Delete Note", key=f"delete_current_note_{note_id}"):
-                            st.session_state['delete_note_id'] = note_id
-                            st.session_state['delete_confirmation'] = False
-                            st.rerun()
+                with view_tab:
+                    st.markdown(note['content'])
                     
-                    st.caption(f"Subject: {note[2]}")
+                    # Option to clear the selected note
+                    if st.button("Back to Notes List", key="back_from_view"):
+                        del st.session_state['selected_note_id']
+                        st.rerun()
+                
+                with mindmap_tab:
+                    if notewriter.openrouter_llm:
+                        with st.spinner("Generating Mind Map visualization..."):
+                            mindmap_content = notewriter.generate_mindmap(note['content'])
+                            
+                            # Display the mindmap
+                            st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
+                            
+                            # Use the streamlit-markmap component to visualize
+                            from streamlit_markmap import markmap
+                            markmap(mindmap_content, height=900)
+                    else:
+                        st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
+                
+                with edit_tab:
+                    # Create a form for editing
+                    with st.form("edit_note_form"):
+                        edited_title = st.text_input("Title", value=note['title'])
+                        edited_subject = st.text_input("Subject", value=note['subject'])
+                        edited_content = st.text_area("Content", value=note['content'], height=400)
+                        
+                        # Convert tags list to string for editing
+                        tags_str = ""
+                        if note.get('tags'):
+                            tags_list = note['tags'] if isinstance(note['tags'], list) else [note['tags']]
+                            tags_str = ", ".join(tags_list)
+                        
+                        edited_tags = st.text_input("Tags (comma separated)", value=tags_str)
+                        
+                        save_changes = st.form_submit_button("Save Changes")
+                        
+                        if save_changes:
+                            # Update the note
+                            update_data = {
+                                "title": edited_title,
+                                "content": edited_content,
+                                "subject": edited_subject,
+                                "tags": edited_tags
+                            }
+                            
+                            if notewriter.update_note(note['id'], st.session_state['user_id'], update_data):
+                                st.success("Note updated successfully!")
+                                st.rerun()
+                            else:
+                                st.error("Failed to update note.")
                     
-                    # Display source information if available
-                    if note[4]:  # source_type
-                        source_type_display = note[4].capitalize()
-                        if note[5]:  # source_url
-                            st.caption(f"Source: {source_type_display} - [{note[5]}]({note[5]})")
-                        else:
-                            st.caption(f"Source: {source_type_display}")
-                    
-                    if note[3]:  # tags
-                        st.caption(f"Tags: {', '.join(note[3])}")
-                    
-                    # Display note content
-                    st.markdown(note[1])
-                    
-                    # Add download button
-                    note_text = f"# {note[0]}\n\nSubject: {note[2]}\n"
-                    if note[4]:  # source_type
-                        source_type_display = note[4].capitalize()
-                        if note[5]:  # source_url
-                            note_text += f"Source: {source_type_display} - {note[5]}\n"
-                        else:
-                            note_text += f"Source: {source_type_display}\n"
-                    if note[3]:  # tags
-                        note_text += f"Tags: {', '.join(note[3])}\n"
-                    note_text += f"\n{note[1]}"
-                    
-                    st.download_button(
-                        label="Download Note as Markdown",
-                        data=note_text,
-                        file_name=f"{note[0].replace(' ', '_')}.md",
-                        mime="text/markdown",
-                    )
-        else:
-            st.info("You haven't saved any notes yet.")
-    else:
-        st.warning("Please set up your profile first on the Home page.")
+                    # Delete note button (outside the form)
+                    if st.button("Delete This Note", key="delete_from_edit"):
+                        # Add a confirmation check
+                        confirm_delete = st.button("Confirm Delete", key="confirm_delete")
+                        
+                        if confirm_delete:
+                            if notewriter.delete_note(note['id'], st.session_state['user_id']):
+                                st.success("Note deleted successfully!")
+                                
+                                # Clear the selected note from session state
+                                del st.session_state['selected_note_id']
+                                
+                                # Refresh the page
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete note.")
 
 def planner_page():
     st.title("📅 Planner")
