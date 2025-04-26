@@ -155,7 +155,7 @@ class Notewriter:
         cursor = self.conn.cursor()
         
         cursor.execute("""
-            SELECT id, title, content, subject, tags, created_at
+            SELECT id, title, content, subject, tags, created_at, mindmap_content
             FROM notes
             WHERE id = %s AND student_id = %s
         """, (note_id, student_id))
@@ -172,7 +172,8 @@ class Notewriter:
             "content": row[2],
             "subject": row[3],
             "tags": row[4],
-            "created_at": row[5]
+            "created_at": row[5],
+            "mindmap_content": row[6]
         }
     
     def add_note(self, student_id, note_data):
@@ -647,6 +648,71 @@ class Notewriter:
         except Exception as e:
             print(f"Error generating mindmap: {str(e)}")
             return f"Error generating mindmap: {str(e)}"
+    
+    def save_mindmap(self, note_id: int, mindmap_content: str) -> bool:
+        """
+        Save a mindmap outline to the database for a specific note
+        
+        Args:
+            note_id (int): The ID of the note to save the mindmap for
+            mindmap_content (str): The markdown-formatted mindmap content
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.conn:
+            return False
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            cursor.execute("""
+                UPDATE notes
+                SET mindmap_content = %s
+                WHERE id = %s
+            """, (mindmap_content, note_id))
+            
+            affected_rows = cursor.rowcount
+            self.conn.commit()
+            cursor.close()
+            
+            return affected_rows > 0
+        except Exception as e:
+            print(f"Error saving mindmap: {e}")
+            self.conn.rollback()
+            return False
+    
+    def get_mindmap(self, note_id: int) -> Optional[str]:
+        """
+        Retrieve a mindmap outline from the database for a specific note
+        
+        Args:
+            note_id (int): The ID of the note to get the mindmap for
+            
+        Returns:
+            Optional[str]: The mindmap content or None if not found
+        """
+        if not self.conn:
+            return None
+        
+        try:
+            cursor = self.conn.cursor()
+            
+            cursor.execute("""
+                SELECT mindmap_content
+                FROM notes
+                WHERE id = %s
+            """, (note_id,))
+            
+            result = cursor.fetchone()
+            cursor.close()
+            
+            if result and result[0]:
+                return result[0]
+            return None
+        except Exception as e:
+            print(f"Error retrieving mindmap: {e}")
+            return None
             
     # Close the database connection when done
     def __del__(self):

@@ -32,4 +32,4 @@ nest-asyncio
 # Mind map visualization
 streamlit-markmap
 # OpenRouter integration
-openai>=1.0.0
+openai

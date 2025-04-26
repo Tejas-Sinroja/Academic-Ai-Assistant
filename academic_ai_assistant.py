@@ -517,7 +517,18 @@ def notewriter_page():
                                 if output_format == "Mind Map":
                                     if notewriter.openrouter_llm:
                                         with st.spinner("Generating Mind Map visualization..."):
-                                            mindmap_content = notewriter.generate_mindmap(result["content"])
+                                            # Check if we already have a mindmap for this note
+                                            existing_mindmap = notewriter.get_mindmap(result["note_id"])
+                                            
+                                            if existing_mindmap:
+                                                mindmap_content = existing_mindmap
+                                                st.success("Using previously generated mind map")
+                                            else:
+                                                # Generate a new mindmap
+                                                mindmap_content = notewriter.generate_mindmap(result["content"])
+                                                # Save it to the database for future use
+                                                notewriter.save_mindmap(result["note_id"], mindmap_content)
+                                                st.success("Mind map generated and saved for future use")
                                             
                                             # Display the mindmap
                                             st.subheader("Mind Map Visualization")
@@ -570,7 +581,18 @@ def notewriter_page():
                             if output_format == "Mind Map":
                                 if notewriter.openrouter_llm:
                                     with st.spinner("Generating Mind Map visualization..."):
-                                        mindmap_content = notewriter.generate_mindmap(result["content"])
+                                        # Check if we already have a mindmap for this note
+                                        existing_mindmap = notewriter.get_mindmap(result["note_id"])
+                                        
+                                        if existing_mindmap:
+                                            mindmap_content = existing_mindmap
+                                            st.success("Using previously generated mind map")
+                                        else:
+                                            # Generate a new mindmap
+                                            mindmap_content = notewriter.generate_mindmap(result["content"])
+                                            # Save it to the database for future use
+                                            notewriter.save_mindmap(result["note_id"], mindmap_content)
+                                            st.success("Mind map generated and saved for future use")
                                         
                                         # Display the mindmap
                                         st.subheader("Mind Map Visualization")
@@ -767,15 +789,34 @@ def notewriter_page():
                 
                 with mindmap_tab:
                     if notewriter.openrouter_llm:
-                        with st.spinner("Generating Mind Map visualization..."):
-                            mindmap_content = notewriter.generate_mindmap(note['content'])
+                        # Check if we already have a mindmap for this note
+                        existing_mindmap = notewriter.get_mindmap(note['id'])
+                        
+                        if existing_mindmap:
+                            # Use the existing mindmap
+                            st.success("Loading saved mind map")
                             
                             # Display the mindmap
                             st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
                             
                             # Use the streamlit-markmap component to visualize
                             from streamlit_markmap import markmap
-                            markmap(mindmap_content, height=900)
+                            markmap(existing_mindmap, height=600)
+                        else:
+                            # Generate a new mindmap
+                            with st.spinner("Generating Mind Map visualization..."):
+                                mindmap_content = notewriter.generate_mindmap(note['content'])
+                                
+                                # Save the mindmap for future use
+                                notewriter.save_mindmap(note['id'], mindmap_content)
+                                st.success("Mind map generated and saved for future use")
+                                
+                                # Display the mindmap
+                                st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
+                                
+                                # Use the streamlit-markmap component to visualize
+                                from streamlit_markmap import markmap
+                                markmap(mindmap_content, height=600)
                     else:
                         st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
                 

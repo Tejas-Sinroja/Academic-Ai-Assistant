@@ -21,7 +21,7 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
 def update_notes_table():
-    """Add source_type and source_url columns to the notes table if they don't exist"""
+    """Add source_type, source_url, and mindmap_content columns to the notes table if they don't exist"""
     try:
         # Connect to the database
         conn = psycopg2.connect(
@@ -66,6 +66,23 @@ def update_notes_table():
             print("Column 'source_url' added successfully.")
         else:
             print("Column 'source_url' already exists in notes table.")
+        
+        # Check if mindmap_content column exists
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'notes' AND column_name = 'mindmap_content'
+        """)
+        
+        if not cursor.fetchone():
+            print("Adding 'mindmap_content' column to notes table...")
+            cursor.execute("""
+                ALTER TABLE notes
+                ADD COLUMN mindmap_content TEXT
+            """)
+            print("Column 'mindmap_content' added successfully.")
+        else:
+            print("Column 'mindmap_content' already exists in notes table.")
         
         # Commit the changes
         conn.commit()
