@@ -17,7 +17,10 @@ import uuid
 import validators
 import json
 import tempfile
+import re
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from src.agents.notewriter import get_notewriter
 from src.agents.planner import get_planner
 from src.agents.advisor import get_advisor
@@ -148,26 +151,58 @@ def init_db():
     conn.close()
 
 def check_db_schema():
-    """Check if the database schema is up to date"""
-    conn = init_connection()
-    cursor = conn.cursor()
-    
+    """Check if the database schema is up-to-date and return a list of issues"""
     schema_issues = []
     
-    # Check if source_type and source_url columns exist in notes table
-    cursor.execute("""
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'notes' AND column_name IN ('source_type', 'source_url')
-    """)
-    
-    existing_columns = [row[0] for row in cursor.fetchall()]
-    
-    if 'source_type' not in existing_columns or 'source_url' not in existing_columns:
-        schema_issues.append("The notes table is missing the source_type or source_url columns")
-    
-    cursor.close()
-    conn.close()
+    try:
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        # Check if source_type column exists in notes table
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'notes' AND column_name = 'source_type'
+        """)
+        
+        if not cursor.fetchone():
+            schema_issues.append("Notes table missing 'source_type' column")
+        
+        # Check if source_url column exists in notes table
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'notes' AND column_name = 'source_url'
+        """)
+        
+        if not cursor.fetchone():
+            schema_issues.append("Notes table missing 'source_url' column")
+            
+        # Check if mindmap_content column exists in notes table
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'notes' AND column_name = 'mindmap_content'
+        """)
+        
+        if not cursor.fetchone():
+            schema_issues.append("Notes table missing 'mindmap_content' column")
+            
+        # Check if quizzes table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'quizzes'
+            )
+        """)
+        
+        if not cursor.fetchone()[0]:
+            schema_issues.append("Quizzes table doesn't exist")
+        
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        schema_issues.append(f"Error checking schema: {str(e)}")
     
     return schema_issues
 
@@ -206,7 +241,8 @@ def main():
         "Notewriter": "📝",
         "Planner": "📅",
         "Advisor": "🧠",
-        "PDF Chat": "💬"
+        "Quiz & Analyze": "📚",
+        "QnA": "💬"
     }
     
     # Create selection box with icons
@@ -225,8 +261,10 @@ def main():
         planner_page()
     elif selection == "Advisor":
         advisor_page()
-    elif selection == "PDF Chat":
+    elif selection == "QnA":
         pdf_chat_page()
+    elif selection == "Quiz & Analyze":
+        quiz_analyze_page()
     
     # Footer
     st.sidebar.markdown("---")
@@ -247,6 +285,7 @@ def home_page():
         - **📝 Notewriter**: Generate study materials and summarize lectures
         - **📅 Planner**: Optimize your schedule and manage your academic calendar
         - **🧠 Advisor**: Get personalized learning and time management advice
+        - **📚 Quiz & Analyze**: Test your knowledge and analyze your understanding
         
         Get started by exploring the different features using the sidebar navigation.
         """)
@@ -304,7 +343,7 @@ def home_page():
     st.markdown("---")
     st.subheader("🔍 System Overview")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown("### 📝 Notewriter")
@@ -332,6 +371,15 @@ def home_page():
         - Receive time management tips
         """)
         st.button("Go to Advisor", key="home_to_advisor", on_click=lambda: st.session_state.update({"navigation": "Advisor"}))
+        
+    with col4:
+        st.markdown("### 📚 Quiz & Analyze")
+        st.markdown("""
+        - Test your knowledge
+        - Generate practice questions
+        - Get personalized feedback
+        """)
+        st.button("Go to Quiz & Analyze", key="home_to_quiz", on_click=lambda: st.session_state.update({"navigation": "Quiz & Analyze"}))
 
 def notewriter_page():
     st.title("📝 Notewriter")
@@ -1897,18 +1945,54 @@ def pdf_chat_page():
         # Initialize chat history for this content if not exists
         chat_history_key = f"chat_history_{hash(st.session_state.chat_content_name)}"
         if chat_history_key not in st.session_state:
-            st.session_state[chat_history_key] = []
+            # Check if we have history in the database first
+            try:
+                conn = init_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT content
+                    FROM knowledge_base
+                    WHERE 
+                        metadata->>'type' = 'chat_history'
+                        AND metadata->>'content_name_hash' = %s
+                        AND metadata->>'student_id' = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (str(hash(st.session_state.chat_content_name)), str(st.session_state['user_id'])))
+                
+                saved_history = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                
+                if saved_history and saved_history[0]:
+                    try:
+                        # Load chat history from database
+                        st.session_state[chat_history_key] = json.loads(saved_history[0])
+                    except:
+                        # If loading fails, start with empty history
+                        st.session_state[chat_history_key] = []
+                else:
+                    # No history found in database
+                    st.session_state[chat_history_key] = []
+            except:
+                # If database query fails, start with empty history
+                st.session_state[chat_history_key] = []
         
         # Display chat history
-        for message in st.session_state[chat_history_key]:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-                
-                # Display sources if available
-                if "sources" in message and message["sources"]:
-                    st.caption("**Sources:**")
-                    for source in message["sources"]:
-                        st.caption(f"- {source}")
+        with st.container():
+            # Create a scrollable container for chat history
+            chat_container = st.container()
+            
+            with chat_container:
+                for message in st.session_state[chat_history_key]:
+                    with st.chat_message(message["role"]):
+                        st.write(message["content"])
+                        
+                        # Display sources if available
+                        if "sources" in message and message["sources"]:
+                            st.caption("**Sources:**")
+                            for source in message["sources"]:
+                                st.caption(f"- {source}")
         
         # Chat input
         user_question = st.chat_input("Ask a question about this content...")
@@ -1917,7 +2001,8 @@ def pdf_chat_page():
             # Add user message to chat history
             st.session_state[chat_history_key].append({
                 "role": "user", 
-                "content": user_question
+                "content": user_question,
+                "timestamp": datetime.now().isoformat()
             })
             
             # Display user message
@@ -1972,14 +2057,16 @@ def pdf_chat_page():
                     st.session_state[chat_history_key].append({
                         "role": "assistant", 
                         "content": response,
-                        "sources": sources
+                        "sources": sources,
+                        "timestamp": datetime.now().isoformat()
                     })
                     
-                    # Store interaction in database for future reference
+                    # Save chat history to database for persistence
                     try:
                         conn = init_connection()
                         cursor = conn.cursor()
                         
+                        # First, store the interaction details
                         cursor.execute("""
                             INSERT INTO knowledge_base (title, content, metadata)
                             VALUES (%s, %s, %s)
@@ -1998,11 +2085,57 @@ def pdf_chat_page():
                             })
                         ))
                         
+                        # Then, update the full chat history
+                        # First check if we have an existing history record
+                        cursor.execute("""
+                            SELECT id FROM knowledge_base
+                            WHERE 
+                                metadata->>'type' = 'chat_history'
+                                AND metadata->>'content_name_hash' = %s
+                                AND metadata->>'student_id' = %s
+                        """, (str(hash(st.session_state.chat_content_name)), str(st.session_state['user_id'])))
+                        
+                        existing_history = cursor.fetchone()
+                        
+                        if existing_history:
+                            # Update existing record
+                            cursor.execute("""
+                                UPDATE knowledge_base
+                                SET content = %s, metadata = %s
+                                WHERE id = %s
+                            """, (
+                                json.dumps(st.session_state[chat_history_key]),
+                                json.dumps({
+                                    "type": "chat_history",
+                                    "content_name": st.session_state.chat_content_name,
+                                    "content_name_hash": str(hash(st.session_state.chat_content_name)),
+                                    "student_id": st.session_state['user_id'],
+                                    "updated_at": datetime.now().isoformat()
+                                }),
+                                existing_history[0]
+                            ))
+                        else:
+                            # Insert new record
+                            cursor.execute("""
+                                INSERT INTO knowledge_base (title, content, metadata)
+                                VALUES (%s, %s, %s)
+                            """, (
+                                f"Chat History: {st.session_state.chat_content_name}",
+                                json.dumps(st.session_state[chat_history_key]),
+                                json.dumps({
+                                    "type": "chat_history",
+                                    "content_name": st.session_state.chat_content_name,
+                                    "content_name_hash": str(hash(st.session_state.chat_content_name)),
+                                    "student_id": st.session_state['user_id'],
+                                    "updated_at": datetime.now().isoformat()
+                                })
+                            ))
+                        
                         conn.commit()
                         cursor.close()
                         conn.close()
                     except Exception as db_error:
-                        print(f"Error storing chat interaction: {str(db_error)}")
+                        print(f"Error storing chat history: {str(db_error)}")
                     
                     # Update the placeholder with the response
                     # First, clear the placeholder to remove the "Thinking..." message
@@ -2026,7 +2159,8 @@ def pdf_chat_page():
                     # Add error to chat history
                     st.session_state[chat_history_key].append({
                         "role": "assistant", 
-                        "content": error_msg
+                        "content": error_msg,
+                        "timestamp": datetime.now().isoformat()
                     })
         elif not api_key and user_question:
             st.warning("Please enter your Groq API key to enable chat.")
@@ -2035,10 +2169,30 @@ def pdf_chat_page():
         
     # Add option to clear chat history
     if st.session_state.chat_content and chat_history_key in st.session_state and st.session_state[chat_history_key]:
-        col1, col2 = st.columns([1, 4])
+        col1, col2, col3 = st.columns([1, 2, 2])
         with col1:
             if st.button("Clear Chat History"):
+                # Clear from session state
                 st.session_state[chat_history_key] = []
+                
+                # Clear from database
+                try:
+                    conn = init_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        DELETE FROM knowledge_base
+                        WHERE 
+                            metadata->>'type' = 'chat_history'
+                            AND metadata->>'content_name_hash' = %s
+                            AND metadata->>'student_id' = %s
+                    """, (str(hash(st.session_state.chat_content_name)), str(st.session_state['user_id'])))
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                except Exception as e:
+                    print(f"Error clearing chat history from database: {str(e)}")
+                
+                st.success("Chat history cleared.")
                 st.rerun()
         with col2:
             if st.button("Clear Knowledge Base (Reset Index)"):
@@ -2048,6 +2202,49 @@ def pdf_chat_page():
                     del st.session_state.rag_pipelines[pipeline_key]
                 st.success("Knowledge base cleared and will be rebuilt on your next question.")
                 st.rerun()
+        with col3:
+            if st.button("Export Chat History"):
+                # Export chat history as a note
+                try:
+                    chat_content = f"# Chat with {st.session_state.chat_content_name}\n\n"
+                    chat_content += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                    
+                    for message in st.session_state[chat_history_key]:
+                        role = "You" if message["role"] == "user" else "Assistant"
+                        chat_content += f"## {role}:\n{message['content']}\n\n"
+                        if message["role"] == "assistant" and "sources" in message and message["sources"]:
+                            chat_content += "**Sources:**\n"
+                            for source in message["sources"]:
+                                chat_content += f"- {source}\n"
+                            chat_content += "\n"
+                    
+                    conn = init_connection()
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("""
+                        INSERT INTO notes (
+                            student_id, title, content, subject, source_type
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        st.session_state['user_id'],
+                        f"Chat History: {st.session_state.chat_content_name}",
+                        chat_content,
+                        "Chat History",
+                        "chat_export"
+                    ))
+                    
+                    note_id = cursor.fetchone()[0]
+                    
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                    
+                    st.success(f"Chat history exported as a note. You can access it in the Notewriter section.")
+                    
+                except Exception as e:
+                    st.error(f"Error exporting chat history: {str(e)}")
 
 def create_rag_pipeline(content, content_name, llm):
     """
@@ -2170,6 +2367,512 @@ def combine_knowledge_sources(sources_list):
             all_documents.append(document)
     
     return all_documents
+
+def quiz_analyze_page():
+    st.title("📚 Quiz & Analyze")
+    
+    st.markdown("""
+    Generate multiple-choice questions from your notes, PDFs, or any content you're studying.
+    Test your knowledge and get AI-powered analysis of your performance with actionable feedback.
+    """)
+    
+    if 'user_id' not in st.session_state:
+        st.warning("Please set up your profile first on the Home page.")
+        return
+    
+    # Get API key from .env or session state
+    groq_api_key = os.getenv("GROQ_API_KEY", "")
+    if not groq_api_key or groq_api_key == "your_groq_api_key":
+        if "api_key" in st.session_state:
+            groq_api_key = st.session_state.api_key
+        else:
+            groq_api_key = st.text_input("Enter Groq API Key (required for AI processing):", type="password")
+            if groq_api_key:
+                st.session_state.api_key = groq_api_key
+    
+    # Create tabs for different quiz functions
+    tab1, tab2 = st.tabs(["Create Quiz", "Quiz History"])
+    
+    with tab1:
+        st.subheader("Create a New Quiz")
+        
+        # Content source selection
+        st.markdown("### Step 1: Select Content Source")
+        
+        source_options = ["Upload PDF", "Enter Text", "From Saved Notes"]
+        source_type = st.radio("Choose your content source:", source_options, horizontal=True)
+        
+        # Content input based on source type
+        content = None
+        content_source = None
+        
+        if source_type == "Upload PDF":
+            uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
+            if uploaded_file:
+                try:
+                    with st.spinner("Processing PDF..."):
+                        # Save uploaded file to a temporary file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                            temp_file.write(uploaded_file.getvalue())
+                            temp_path = temp_file.name
+                        
+                        # Extract content using PyPDFLoader
+                        loader = PyPDFLoader(temp_path)
+                        documents = loader.load()
+                        
+                        # Clean up the temporary file
+                        os.unlink(temp_path)
+                        
+                        # Extract text content
+                        content = "\n".join([doc.page_content for doc in documents])
+                        content_source = uploaded_file.name
+                        
+                        # Show preview of the content
+                        with st.expander("Content Preview"):
+                            st.text(content[:500] + "..." if len(content) > 500 else content)
+                except Exception as e:
+                    st.error(f"Error processing PDF: {str(e)}")
+        
+        elif source_type == "Enter Text":
+            content = st.text_area("Enter or paste your content here:", height=200)
+            content_source = "Manual Input"
+            if content:
+                with st.expander("Content Preview"):
+                    st.text(content[:500] + "..." if len(content) > 500 else content)
+        
+        elif source_type == "From Saved Notes":
+            # Get user's notes
+            conn = init_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, title, subject, created_at 
+                FROM notes 
+                WHERE student_id = %s
+                ORDER BY created_at DESC
+            """, (st.session_state['user_id'],))
+            
+            notes = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            if notes:
+                notes_options = ["Select a note..."] + [f"{note[1]} ({note[2]})" for note in notes]
+                selected_note_index = st.selectbox("Choose a note to create quiz from:", 
+                                                  options=range(len(notes_options)),
+                                                  format_func=lambda x: notes_options[x])
+                
+                if selected_note_index > 0:
+                    # Get the actual note
+                    note_id = notes[selected_note_index - 1][0]
+                    
+                    conn = init_connection()
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("""
+                        SELECT title, content, subject
+                        FROM notes
+                        WHERE id = %s AND student_id = %s
+                    """, (note_id, st.session_state['user_id']))
+                    
+                    note = cursor.fetchone()
+                    cursor.close()
+                    conn.close()
+                    
+                    if note:
+                        note_title, note_content, subject = note
+                        content = note_content
+                        content_source = note_title
+                        
+                        # Show preview of the content
+                        with st.expander("Content Preview"):
+                            st.text(content[:500] + "..." if len(content) > 500 else content)
+            else:
+                st.info("You haven't saved any notes yet. Create notes using the Notewriter feature.")
+        
+        # Quiz settings
+        st.markdown("### Step 2: Quiz Settings")
+        col1, col2 = st.columns(2)
+        with col1:
+            quiz_title = st.text_input("Quiz Title", placeholder="e.g., Chapter 5 Review")
+            subject = st.text_input("Subject", placeholder="e.g., Biology")
+        with col2:
+            difficulty = st.select_slider("Difficulty", options=["Easy", "Medium", "Hard"], value="Medium")
+            num_questions = st.number_input("Number of Questions", min_value=3, max_value=20, value=5)
+        
+        # Quiz generation
+        if st.button("Generate Quiz") and content and groq_api_key:
+            if not content or len(content.strip()) < 100:
+                st.error("Please provide more content to generate meaningful questions (minimum 100 characters).")
+            elif not quiz_title:
+                st.error("Please provide a title for your quiz.")
+            else:
+                with st.spinner(f"Generating {num_questions} {difficulty.lower()}-level questions..."):
+                    try:
+                        # Initialize model
+                        model = ChatGroq(model="llama3-70b-8192", api_key=groq_api_key)
+                        
+                        # Limit content size to avoid token limits
+                        max_content_length = 25000
+                        if len(content) > max_content_length:
+                            content = content[:max_content_length]
+                        
+                        # Create prompt template
+                        prompt = ChatPromptTemplate.from_template(
+                            """You're an expert quiz creator specializing in {difficulty} level questions. 
+                            Generate {num_questions} high-quality MCQs based EXCLUSIVELY on the following content:
+                            {content}
+                            
+                            Requirements:
+                            - Each question must cover different key concepts
+                            - Questions should progress from basic to advanced (for higher difficulty)
+                            - Format each question as:
+                                Q1. [Question text]
+                                a) [Option A]
+                                b) [Option B]
+                                c) [Option C]
+                                d) [Option D]
+                            - Provide answer key in format:
+                                Answer Key:
+                                1. [correct_letter]
+                                2. [correct_letter]
+                                ...
+                                {num_questions}. [correct_letter]
+                            - Avoid markdown formatting
+                            - Ensure answers are factually correct based on provided content"""
+                        )
+                        
+                        # Create chain and run it
+                        chain = prompt | model
+                        response = chain.invoke({
+                            "difficulty": difficulty, 
+                            "content": content,
+                            "num_questions": num_questions
+                        })
+                        
+                        mcq_response = response.content
+                        
+                        # Parse the response into questions and answers
+                        try:
+                            # Split questions and answers
+                            parts = mcq_response.split("Answer Key:")
+                            question_part = parts[0].strip() if len(parts) > 0 else ""
+                            answer_part = parts[1].strip() if len(parts) > 1 else ""
+                            
+                            # Extract questions using regex
+                            question_blocks = re.split(r'(?:^|\n)(?:Q?(\d+)\.)', question_part)
+                            
+                            # Process question blocks
+                            questions = []
+                            current_q = None
+                            for block in question_blocks:
+                                if not block:
+                                    continue
+                                if block.isdigit():
+                                    current_q = int(block)
+                                elif current_q is not None:
+                                    # Add the question with its number
+                                    questions.append(f"Q{current_q}. {block.strip()}")
+                                    current_q = None
+                            
+                            # Extract answers
+                            answer_entries = re.findall(r'(?:^|\n)(?:Q?(\d+)\.?\s*([a-d]))', answer_part, re.IGNORECASE)
+                            answer_dict = {int(num): letter.lower() for num, letter in answer_entries}
+                            
+                            # Create ordered answer key
+                            answer_key = []
+                            for i in range(1, num_questions + 1):
+                                if i in answer_dict:
+                                    answer_key.append(answer_dict[i])
+                                else:
+                                    # If missing answers, add placeholder
+                                    answer_key.append("")
+                            
+                            # Validate results
+                            if len(questions) < 1 or len(answer_key) < 1:
+                                st.error(f"Failed to parse quiz content. Please try again.")
+                            else:
+                                # Store in session state
+                                st.session_state.quiz_questions = questions[:num_questions]
+                                st.session_state.quiz_answer_key = answer_key[:num_questions]
+                                st.session_state.quiz_user_answers = [""] * len(st.session_state.quiz_questions)
+                                st.session_state.quiz_content = content
+                                st.session_state.quiz_title = quiz_title
+                                st.session_state.quiz_subject = subject
+                                st.session_state.quiz_difficulty = difficulty
+                                st.session_state.quiz_content_source = content_source
+                                
+                                st.success(f"Quiz generated successfully with {len(st.session_state.quiz_questions)} questions!")
+                                st.experimental_rerun()  # Force a rerun to show the quiz
+                        except Exception as e:
+                            st.error(f"Error parsing quiz: {str(e)}")
+                    except Exception as e:
+                        st.error(f"Error generating quiz: {str(e)}")
+        
+        # Display quiz if questions have been generated
+        if 'quiz_questions' in st.session_state and st.session_state.quiz_questions:
+            st.markdown("---")
+            st.subheader(f"Quiz: {st.session_state.quiz_title}")
+            st.markdown(f"**Subject:** {st.session_state.quiz_subject} | **Difficulty:** {st.session_state.quiz_difficulty}")
+            
+            # Display questions with radio buttons for answers
+            for i, question in enumerate(st.session_state.quiz_questions):
+                q_text = question.split("a)")[0].strip()
+                st.markdown(f"**{i+1}. {q_text}**")
+                
+                # Extract options using simple parsing
+                options = []
+                option_labels = {}
+                
+                if "a)" in question:
+                    options_text = question.split("a)")[1]
+                    options_lines = options_text.split("\n")
+                    
+                    for line in options_lines:
+                        line = line.strip()
+                        if line.startswith("a)"):
+                            option_labels["a"] = line[2:].strip()
+                            options.append("a")
+                        elif line.startswith("b)"):
+                            option_labels["b"] = line[2:].strip()
+                            options.append("b")
+                        elif line.startswith("c)"):
+                            option_labels["c"] = line[2:].strip()
+                            options.append("c")
+                        elif line.startswith("d)"):
+                            option_labels["d"] = line[2:].strip()
+                            options.append("d")
+                
+                if len(options) > 0:
+                    # Create radio buttons for options
+                    selected_option = st.radio(
+                        f"Select answer for question {i+1}:",
+                        ["", "a", "b", "c", "d"],
+                        format_func=lambda x: f"{x}) {option_labels.get(x, '')}" if x else "Select an answer...",
+                        key=f"q_{i}_answer",
+                        index=0
+                    )
+                    
+                    # Store the selected answer
+                    if selected_option:
+                        st.session_state.quiz_user_answers[i] = selected_option
+                else:
+                    st.error(f"Question {i+1} has an invalid format. Please regenerate the quiz.")
+                
+                st.markdown("---")
+            
+            # Submit button
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button("Submit Quiz"):
+                    # Check if all questions have been answered
+                    unanswered = [i+1 for i, ans in enumerate(st.session_state.quiz_user_answers) if not ans]
+                    
+                    if unanswered:
+                        st.warning(f"Please answer all questions. Missing answers for questions: {', '.join(map(str, unanswered))}")
+                    else:
+                        # Calculate score
+                        score = 0
+                        for i, (user_ans, correct_ans) in enumerate(zip(st.session_state.quiz_user_answers, st.session_state.quiz_answer_key)):
+                            if user_ans.lower() == correct_ans.lower():
+                                score += 1
+                        
+                        # Calculate percentage
+                        total_questions = len(st.session_state.quiz_questions)
+                        percentage = (score / total_questions) * 100
+                        
+                        # Store results in session state
+                        st.session_state.quiz_score = score
+                        st.session_state.quiz_percentage = percentage
+                        
+                        # Show results directly without analysis for now
+                        st.success(f"Quiz submitted! Your score: {score}/{total_questions} ({int(percentage)}%)")
+                        
+                        # Save results to database
+                        try:
+                            conn = init_connection()
+                            cursor = conn.cursor()
+                            
+                            cursor.execute("""
+                                INSERT INTO quizzes (
+                                    student_id, title, content_source, subject, difficulty,
+                                    num_questions, questions, answers, user_answers,
+                                    score, score_percentage, metadata
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                RETURNING id
+                            """, (
+                                st.session_state['user_id'],
+                                st.session_state.quiz_title,
+                                st.session_state.quiz_content_source,
+                                st.session_state.quiz_subject,
+                                st.session_state.quiz_difficulty,
+                                len(st.session_state.quiz_questions),
+                                json.dumps(st.session_state.quiz_questions),
+                                json.dumps(st.session_state.quiz_answer_key),
+                                json.dumps(st.session_state.quiz_user_answers),
+                                score,
+                                percentage,
+                                json.dumps({
+                                    "created_at": datetime.now().isoformat()
+                                })
+                            ))
+                            
+                            quiz_id = cursor.fetchone()[0]
+                            st.session_state.last_quiz_id = quiz_id
+                            
+                            conn.commit()
+                            cursor.close()
+                            conn.close()
+                            
+                            st.success(f"Quiz results saved to your history!")
+                            
+                        except Exception as db_error:
+                            st.error(f"Error saving quiz results: {str(db_error)}")
+            
+            with col2:
+                if st.button("Clear and Start Over"):
+                    # Clear session state variables related to the current quiz
+                    for key in ['quiz_questions', 'quiz_answer_key', 'quiz_user_answers',
+                                'quiz_content', 'quiz_title', 'quiz_subject', 
+                                'quiz_difficulty', 'quiz_content_source']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.experimental_rerun()
+    
+    with tab2:
+        st.subheader("Your Quiz History")
+        
+        # Get quiz history from database
+        conn = init_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT id, title, subject, difficulty, num_questions, 
+                       score, score_percentage, created_at
+                FROM quizzes
+                WHERE student_id = %s
+                ORDER BY created_at DESC
+            """, (st.session_state['user_id'],))
+            
+            quizzes = cursor.fetchall()
+        except Exception as e:
+            st.error(f"Error retrieving quiz history: {str(e)}")
+            quizzes = []
+        finally:
+            cursor.close()
+            conn.close()
+        
+        if quizzes:
+            # Show summary table
+            quiz_data = []
+            for quiz in quizzes:
+                quiz_id, title, subject, difficulty, num_q, score, percentage, date = quiz
+                quiz_data.append({
+                    "ID": quiz_id,
+                    "Title": title,
+                    "Subject": subject,
+                    "Difficulty": difficulty,
+                    "Questions": num_q,
+                    "Score": f"{score}/{num_q}",
+                    "Percentage": f"{percentage:.1f}%",
+                    "Date": date.strftime("%Y-%m-%d %H:%M")
+                })
+            
+            df = pd.DataFrame(quiz_data)
+            st.dataframe(df, use_container_width=True)
+            
+            # Select a quiz to view details
+            selected_quiz = st.selectbox(
+                "Select a quiz to view details:",
+                options=[f"{q[1]} ({q[7].strftime('%Y-%m-%d')})" for q in quizzes],
+                index=0
+            )
+            
+            selected_index = [f"{q[1]} ({q[7].strftime('%Y-%m-%d')})" for q in quizzes].index(selected_quiz)
+            selected_quiz_id = quizzes[selected_index][0]
+            
+            # Get full quiz details
+            conn = init_connection()
+            cursor = conn.cursor()
+            
+            try:
+                cursor.execute("""
+                    SELECT title, subject, difficulty, num_questions, 
+                           questions, answers, user_answers,
+                           score, score_percentage, created_at
+                    FROM quizzes
+                    WHERE id = %s AND student_id = %s
+                """, (selected_quiz_id, st.session_state['user_id']))
+                
+                quiz_details = cursor.fetchone()
+            except Exception as e:
+                st.error(f"Error retrieving quiz details: {str(e)}")
+                quiz_details = None
+            finally:
+                cursor.close()
+                conn.close()
+            
+            if quiz_details:
+                title, subject, difficulty, num_q, questions_json, answers_json, user_answers_json, score, percentage, date = quiz_details
+                
+                # Parse JSON data
+                try:
+                    questions = json.loads(questions_json)
+                    answers = json.loads(answers_json)
+                    user_answers = json.loads(user_answers_json)
+                except Exception as e:
+                    st.error(f"Error parsing quiz data: {str(e)}")
+                    questions, answers, user_answers = [], [], []
+                
+                # Display quiz details
+                st.markdown(f"### {title}")
+                st.markdown(f"**Subject:** {subject} | **Difficulty:** {difficulty} | **Date:** {date.strftime('%Y-%m-%d %H:%M')}")
+                
+                # Display score
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    st.markdown(f"### Score: {score}/{num_q}")
+                    
+                    # Score gauge using progress bar
+                    color = "green" if percentage >= 80 else "orange" if percentage >= 60 else "red"
+                    st.markdown(
+                        f"""
+                        <div style="text-align: center; font-size: 24px; font-weight: bold; color: {color};">
+                            {percentage:.1f}%
+                        </div>
+                        """, 
+                        unsafe_allow_html=True
+                    )
+                    st.progress(percentage/100)
+                
+                # Display questions and answers
+                with st.expander("View Questions and Answers"):
+                    for i, (question, user_ans, correct_ans) in enumerate(zip(questions, user_answers, answers)):
+                        q_text = question.split("a)")[0].strip()
+                        
+                        st.markdown(f"**{i+1}. {q_text}**")
+                        
+                        # Extract options
+                        if "a)" in question:
+                            options_text = question.split("a)")[1]
+                            options_lines = options_text.split("\n")
+                            
+                            for line in options_lines:
+                                line = line.strip()
+                                if line.startswith(("a)", "b)", "c)", "d)")):
+                                    option_letter = line[0]
+                                    if option_letter == correct_ans:
+                                        st.markdown(f"✅ {line}")
+                                    elif option_letter == user_ans and user_ans != correct_ans:
+                                        st.markdown(f"❌ {line}")
+                                    else:
+                                        st.markdown(f"   {line}")
+                        
+                        st.markdown("---")
+        else:
+            st.info("You haven't taken any quizzes yet. Create a quiz to see your history here.")
 
 if __name__ == "__main__":
     # Check if navigation is set in session state

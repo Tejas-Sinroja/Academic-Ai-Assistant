@@ -94,6 +94,64 @@ def update_notes_table():
         print(f"Error updating notes table: {e}")
         return False
 
+def check_quizzes_table():
+    """Check if the quizzes table exists and create it if not"""
+    try:
+        # Connect to the database
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cursor = conn.cursor()
+        
+        # Check if quizzes table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'quizzes'
+            )
+        """)
+        
+        table_exists = cursor.fetchone()[0]
+        
+        if not table_exists:
+            print("Creating 'quizzes' table...")
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS quizzes (
+                id SERIAL PRIMARY KEY,
+                student_id INTEGER REFERENCES students(id),
+                title VARCHAR(255) NOT NULL,
+                content_source VARCHAR(255),
+                subject VARCHAR(100),
+                difficulty VARCHAR(50),
+                num_questions INTEGER,
+                questions JSONB,
+                answers JSONB,
+                user_answers JSONB,
+                score INTEGER,
+                score_percentage NUMERIC(5,2),
+                analysis TEXT,
+                metadata JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            print("Table 'quizzes' created successfully.")
+        else:
+            print("Table 'quizzes' already exists.")
+        
+        # Commit the changes
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return True
+    except Exception as e:
+        print(f"Error checking quizzes table: {e}")
+        return False
+
 def main():
     """Main function to update the database schema"""
     print("Updating Academic AI Assistant database schema...")
@@ -101,6 +159,11 @@ def main():
     # Update notes table
     if not update_notes_table():
         print("Failed to update notes table. Exiting.")
+        sys.exit(1)
+    
+    # Check quizzes table
+    if not check_quizzes_table():
+        print("Failed to check quizzes table. Exiting.")
         sys.exit(1)
     
     print("Database schema update completed successfully.")

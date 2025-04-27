@@ -9,6 +9,7 @@ Academic AI Assistant is a powerful multi-agent system designed to transform the
 - **Planner**: Schedule optimization and task management
 - **Advisor**: Personalized learning advice based on your profile and academic data
 - **PDF Chat**: Advanced RAG-based chat with PDFs, notes, and multi-source knowledge bases
+- **Quiz & Analyze**: Generate quizzes from your study materials and get AI-powered performance feedback
 - **Profile Management**: Create and manage student profiles with learning styles, academic goals, and performance metrics.
 - **AI-Enhanced Learning Assistant**: Chat with an AI assistant trained on educational resources and personalized to your profile.
 - **Notewriter Agent**: Transform content from various sources (text, web pages, PDFs, YouTube videos) into structured study notes tailored to your learning style.
@@ -19,6 +20,7 @@ Academic AI Assistant is a powerful multi-agent system designed to transform the
 - **Chatbot Interface**: Ask questions about your academic journey or get assistance with specific topics.
 - **RAG-based PDF Chat**: Interact with your study materials using advanced retrieval-augmented generation.
 - **Multi-Source Knowledge Base**: Combine multiple documents for unified querying.
+- **Quiz & Test Prep**: Generate practice quizzes from your notes and study materials.
 
 ## Content Processing Features
 
@@ -53,6 +55,17 @@ The PDF Chat feature allows you to have intelligent conversations with your stud
 5. **Source Attribution**: Every answer includes citations to the specific parts of the documents where the information was found
 6. **Intelligent Chunking**: Documents are automatically divided into optimal segments for accurate retrieval
 7. **Context-Aware Responses**: The system understands the context of your questions in relation to your documents
+
+### Quiz & Analyze Feature (New!)
+Test your knowledge and improve your understanding with the new Quiz & Analyze feature:
+
+1. **Multiple Content Sources**: Generate quizzes from PDFs, notes, or any text content
+2. **Customized Difficulty Levels**: Choose from Easy, Medium, or Hard questions
+3. **Multiple-Choice Format**: Test your knowledge with professionally formatted questions
+4. **Instant Feedback**: See your score and review correct/incorrect answers immediately
+5. **Performance History**: Track your quiz scores over time
+6. **Detailed Review**: Revisit past quizzes to review questions and your responses
+7. **Save Results as Notes**: Save quiz results and analysis to your notes for later review
 
 ## Requirements
 

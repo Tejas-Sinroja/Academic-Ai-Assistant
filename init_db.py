@@ -124,6 +124,28 @@ def create_tables():
         )
         ''')
         
+        # Create quizzes table
+        print("Creating 'quizzes' table...")
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS quizzes (
+            id SERIAL PRIMARY KEY,
+            student_id INTEGER REFERENCES students(id),
+            title VARCHAR(255) NOT NULL,
+            content_source VARCHAR(255),
+            subject VARCHAR(100),
+            difficulty VARCHAR(50),
+            num_questions INTEGER,
+            questions JSONB,
+            answers JSONB,
+            user_answers JSONB,
+            score INTEGER,
+            score_percentage NUMERIC(5,2),
+            analysis TEXT,
+            metadata JSONB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
         conn.commit()
         cursor.close()
         conn.close()
