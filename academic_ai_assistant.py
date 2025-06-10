@@ -2620,28 +2620,46 @@ def quiz_analyze_page():
                 q_text = question.split("a)")[0].strip()
                 st.markdown(f"**{i+1}. {q_text}**")
                 
-                # Extract options using simple parsing
+                # Extract options using improved parsing
                 options = []
                 option_labels = {}
                 
-                if "a)" in question:
-                    options_text = question.split("a)")[1]
-                    options_lines = options_text.split("\n")
-                    
-                    for line in options_lines:
-                        line = line.strip()
-                        if line.startswith("a)"):
-                            option_labels["a"] = line[2:].strip()
-                            options.append("a")
-                        elif line.startswith("b)"):
-                            option_labels["b"] = line[2:].strip()
-                            options.append("b")
-                        elif line.startswith("c)"):
-                            option_labels["c"] = line[2:].strip()
-                            options.append("c")
-                        elif line.startswith("d)"):
-                            option_labels["d"] = line[2:].strip()
-                            options.append("d")
+                # More robust option extraction that handles various formatting
+                option_pattern = re.compile(r'([a-d])\)(.*?)(?=\s*[a-d]\)|$)', re.DOTALL)
+                
+                # Find all options in the question text
+                full_question_text = question
+                matches = option_pattern.findall(full_question_text)
+                
+                for opt_letter, opt_text in matches:
+                    opt_letter = opt_letter.lower()
+                    opt_text = opt_text.strip()
+                    option_labels[opt_letter] = opt_text
+                    options.append(opt_letter)
+                
+                # If no options were found with the regex, fall back to the old method
+                if len(options) == 0:
+                    if "a)" in question:
+                        options_text = question.split("a)")[1]
+                        options_lines = options_text.split("\n")
+                        
+                        for line in options_lines:
+                            line = line.strip()
+                            if line.startswith("a)"):
+                                option_labels["a"] = line[2:].strip()
+                                options.append("a")
+                            elif line.startswith("b)"):
+                                option_labels["b"] = line[2:].strip()
+                                options.append("b")
+                            elif line.startswith("c)"):
+                                option_labels["c"] = line[2:].strip()
+                                options.append("c")
+                            elif line.startswith("d)"):
+                                option_labels["d"] = line[2:].strip()
+                                options.append("d")
+                
+                # Make sure we have all options a, b, c, d
+                expected_options = ["a", "b", "c", "d"]
                 
                 if len(options) > 0:
                     # Create radio buttons for options
@@ -2819,9 +2837,9 @@ def quiz_analyze_page():
                 
                 # Parse JSON data
                 try:
-                    questions = json.loads(questions_json)
-                    answers = json.loads(answers_json)
-                    user_answers = json.loads(user_answers_json)
+                    questions = json.loads(questions_json) if isinstance(questions_json, (str, bytes, bytearray)) else questions_json
+                    answers = json.loads(answers_json) if isinstance(answers_json, (str, bytes, bytearray)) else answers_json
+                    user_answers = json.loads(user_answers_json) if isinstance(user_answers_json, (str, bytes, bytearray)) else user_answers_json
                 except Exception as e:
                     st.error(f"Error parsing quiz data: {str(e)}")
                     questions, answers, user_answers = [], [], []
@@ -2845,7 +2863,7 @@ def quiz_analyze_page():
                         """, 
                         unsafe_allow_html=True
                     )
-                    st.progress(percentage/100)
+                    st.progress(float(percentage)/100)
                 
                 # Display questions and answers
                 with st.expander("View Questions and Answers"):
@@ -2854,21 +2872,46 @@ def quiz_analyze_page():
                         
                         st.markdown(f"**{i+1}. {q_text}**")
                         
-                        # Extract options
-                        if "a)" in question:
-                            options_text = question.split("a)")[1]
-                            options_lines = options_text.split("\n")
+                        # Extract options using improved parsing
+                        options = []
+                        option_labels = {}
+                        
+                        # More robust option extraction that handles various formatting
+                        option_pattern = re.compile(r'([a-d])\)(.*?)(?=\s*[a-d]\)|$)', re.DOTALL)
+                        
+                        # Find all options in the question text
+                        full_question_text = question
+                        matches = option_pattern.findall(full_question_text)
+                        
+                        # Format and display options with correct/incorrect indicators
+                        for opt_letter, opt_text in matches:
+                            opt_letter = opt_letter.lower()
+                            opt_text = opt_text.strip()
+                            option_text = f"{opt_letter}) {opt_text}"
                             
-                            for line in options_lines:
-                                line = line.strip()
-                                if line.startswith(("a)", "b)", "c)", "d)")):
-                                    option_letter = line[0]
-                                    if option_letter == correct_ans:
-                                        st.markdown(f"✅ {line}")
-                                    elif option_letter == user_ans and user_ans != correct_ans:
-                                        st.markdown(f"❌ {line}")
-                                    else:
-                                        st.markdown(f"   {line}")
+                            if opt_letter == correct_ans:
+                                st.markdown(f"✅ {option_text}")
+                            elif opt_letter == user_ans and user_ans != correct_ans:
+                                st.markdown(f"❌ {option_text}")
+                            else:
+                                st.markdown(f"   {option_text}")
+                        
+                        # Fallback to old method if no options were found
+                        if not matches:
+                            if "a)" in question:
+                                options_text = question.split("a)")[1]
+                                options_lines = options_text.split("\n")
+                                
+                                for line in options_lines:
+                                    line = line.strip()
+                                    if line.startswith(("a)", "b)", "c)", "d)")):
+                                        option_letter = line[0]
+                                        if option_letter == correct_ans:
+                                            st.markdown(f"✅ {line}")
+                                        elif option_letter == user_ans and user_ans != correct_ans:
+                                            st.markdown(f"❌ {line}")
+                                        else:
+                                            st.markdown(f"   {line}")
                         
                         st.markdown("---")
         else:
