@@ -621,33 +621,64 @@ class Notewriter:
                 "error": str(e)
             }
     
-    def generate_mindmap(self, note_content: str) -> str:
+    def generate_mindmap(self, content: str) -> str:
         """
-        Generate a mindmap outline from note content
+        Generate a mindmap from note content
         
         Args:
-            note_content (str): The note content to convert to a mindmap
+            content (str): The note content to generate a mindmap for
             
         Returns:
-            str: Markdown-formatted mindmap outline
+            str: A markdown-formatted mindmap
         """
         try:
-            if not self.openrouter_llm:
-                return "OpenRouter LLM not available for mindmap generation"
+            # Always use the primary LLM
+            llm_to_use = self.llm
             
-            # Create a specialized prompt for the OpenRouter LLM
+            # Create a system prompt for mindmap generation
+            system_message = """
+            Convert the following notes into a structured markdown mindmap.
+            
+            Format the mindmap as a Markdown list with hierarchy showing the relationships 
+            between concepts. The output should be formatted as follows:
+            
+            # Main Topic
+            
+            ## Major Concept 1
+            - Sub-concept 1.1
+                - Detail 1.1.1
+                - Detail 1.1.2
+            - Sub-concept 1.2
+            
+            ## Major Concept 2
+            - Sub-concept 2.1
+            - Sub-concept 2.2
+                - Detail 2.2.1
+            
+            Make sure:
+            1. The hierarchy clearly shows relationships between concepts
+            2. The mindmap accurately summarizes the main ideas and details
+            3. The format is valid markdown using headings and nested lists
+            4. You include ALL important information from the notes
+            5. You DO NOT add any new information that isn't in the notes
+            
+            This will be visualized as a mindmap, so proper indentation and hierarchy are critical.
+            """
+            
+            # Prepare messages for the LLM
             messages = [
-                {"role": "system", "content": "You are a specialized tool that converts academic notes into mindmap outlines in Markdown format. Create a hierarchical outline using '- ' for the main level and indentation with '    ' for sublevel items. Each branch should represent a key concept with related details as subbranches."},
-                {"role": "user", "content": f"Convert these notes into a comprehensive mindmap outline in Markdown format:\n\n{note_content[:4000]}"}  # Limit size to avoid token limits
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": content}
             ]
             
-            # Generate the mindmap outline using OpenRouter
-            mindmap_content = self.openrouter_llm.generate(messages)
+            # Generate mindmap content
+            mindmap_content = llm_to_use.generate(messages)
             
             return mindmap_content
         except Exception as e:
             print(f"Error generating mindmap: {str(e)}")
-            return f"Error generating mindmap: {str(e)}"
+            # Return a basic mindmap structure if generation fails
+            return f"# {content[:50]}...\n\n## Failed to generate detailed mindmap\n- Error: {str(e)}"
     
     def save_mindmap(self, note_id: int, mindmap_content: str) -> bool:
         """
@@ -720,35 +751,70 @@ class Notewriter:
             self.conn.close()
 
 # Add helper function to get the notewriter instance
-def get_notewriter():
+def get_notewriter(llm_type="groq", groq_api_key=None, openrouter_api_key=None, openrouter_model=None):
     """
     Returns an instance of the Notewriter agent.
     This function is used by the Streamlit app to get a notewriter instance.
+    
+    Args:
+        llm_type (str): The type of LLM to use ("groq" or "openrouter")
+        groq_api_key (str, optional): API key for Groq
+        openrouter_api_key (str, optional): API key for OpenRouter
+        openrouter_model (str, optional): Model name for OpenRouter
     
     Returns:
         Notewriter: An instance of the Notewriter agent
     """
     # Initialize the LLM
-    from src.LLM import GroqLLaMa, OpenRouterLLM
+    from src.LLM import GroqLLaMa, OpenRouterLLM, LLMConfig
     import os
     
-    # Get the API keys from environment
-    groq_api_key = os.getenv("GROQ_API_KEY", "")
-    openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
+    # If API keys not provided, get from environment
+    if groq_api_key is None:
+        groq_api_key = os.getenv("GROQ_API_KEY", "")
     
-    # If Groq API key is not available or is the default placeholder, return None
-    if not groq_api_key or groq_api_key == "your_groq_api_key":
-        # This is handled by the Streamlit app which will check for API key
-        # availability and prompt the user if needed
-        return None
+    if openrouter_api_key is None:
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
     
-    # Initialize the LLMs
-    groq_llm = GroqLLaMa(groq_api_key)
+    # Initialize LLMs based on type requested
+    groq_llm = None
     openrouter_llm = None
     
-    # Add OpenRouter LLM if key is available
-    if openrouter_api_key and openrouter_api_key != "your_openrouter_api_key":
+    if llm_type == "groq":
+        # Check if we have a valid Groq API key
+        if not groq_api_key or groq_api_key == "your_groq_api_key":
+            return None
+        
+        # Initialize Groq LLM
+        groq_llm = GroqLLaMa(groq_api_key)
+        
+        # If we also have OpenRouter key, initialize it as secondary LLM
+        if openrouter_api_key and openrouter_api_key != "your_openrouter_api_key":
+            openrouter_llm = OpenRouterLLM(openrouter_api_key)
+            if openrouter_model:
+                openrouter_llm.config.openrouter_model = openrouter_model
+                
+        # Return Notewriter with Groq as primary LLM
+        return Notewriter(groq_llm, openrouter_llm)
+        
+    elif llm_type == "openrouter":
+        # Check if we have a valid OpenRouter API key
+        if not openrouter_api_key or openrouter_api_key == "your_openrouter_api_key":
+            return None
+            
+        # Initialize OpenRouter LLM
         openrouter_llm = OpenRouterLLM(openrouter_api_key)
+        
+        # Set custom model if provided
+        if openrouter_model:
+            openrouter_llm.config.openrouter_model = openrouter_model
+            
+        # If we also have Groq key, initialize it as secondary LLM
+        if groq_api_key and groq_api_key != "your_groq_api_key":
+            groq_llm = GroqLLaMa(groq_api_key)
+            
+        # Return Notewriter with OpenRouter as primary LLM and ability to generate mindmaps
+        return Notewriter(openrouter_llm, openrouter_llm)
     
-    # Initialize the notewriter with both LLMs
-    return Notewriter(groq_llm, openrouter_llm) 
+    # Default fallback to None if invalid LLM type
+    return None 

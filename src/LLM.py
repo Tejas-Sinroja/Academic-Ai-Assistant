@@ -10,7 +10,7 @@ from openai import OpenAI
 class LLMConfig:
     """Configuration settings for the LLM."""
     groq_model: str = "llama3-70b-8192"  # Updated to use Groq's llama3 model
-    openrouter_model: str = "meta-llama/llama-4-scout:free"  # Default model for OpenRouter
+    openrouter_model: str = "deepseek/deepseek-chat-v3-0324:free"  # Default model for OpenRouter
     # max_tokens: int = 1024
     # default_temp: float = 0.5
 

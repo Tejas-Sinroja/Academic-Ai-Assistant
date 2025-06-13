@@ -242,7 +242,8 @@ def main():
         "Planner": "📅",
         "Advisor": "🧠",
         "Quiz & Analyze": "📚",
-        "QnA": "💬"
+        "QnA": "💬",
+        "Dashboard": "📊"
     }
     
     # Create selection box with icons
@@ -265,6 +266,8 @@ def main():
         pdf_chat_page()
     elif selection == "Quiz & Analyze":
         quiz_analyze_page()
+    elif selection == "Dashboard":
+        dashboard_page()
     
     # Footer
     st.sidebar.markdown("---")
@@ -389,17 +392,62 @@ def notewriter_page():
     tailored to your learning style.
     """)
     
-    # Get API key from .env or session state
+    # LLM selection and configuration
+    st.sidebar.markdown("### 🧠 LLM Configuration")
+    llm_type = st.sidebar.radio(
+        "Select Language Model Provider:",
+        ["Groq", "OpenRouter"],
+        index=0,
+        help="Choose which LLM provider to use for generating notes. Groq is optimized for speed, OpenRouter provides access to multiple models."
+    )
+    
+    # Handle API keys based on selected LLM
     groq_api_key = os.getenv("GROQ_API_KEY", "")
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
     
-    if not groq_api_key or groq_api_key == "your_groq_api_key":
-        if "api_key" in st.session_state:
-            groq_api_key = st.session_state.api_key
-        else:
-            groq_api_key = st.text_input("Enter Groq API Key (required for AI processing):", type="password")
-            if groq_api_key:
-                st.session_state.api_key = groq_api_key
+    if llm_type == "Groq":
+        if not groq_api_key or groq_api_key == "your_groq_api_key":
+            if "groq_api_key" in st.session_state:
+                groq_api_key = st.session_state.groq_api_key
+            else:
+                groq_api_key = st.sidebar.text_input("Enter Groq API Key:", type="password", key="groq_input")
+                if groq_api_key:
+                    st.session_state.groq_api_key = groq_api_key
+                    st.session_state.api_key = groq_api_key  # For backward compatibility
+        
+        # Store selected LLM type
+        st.session_state.selected_llm_type = "groq"
+        st.session_state.selected_api_key = groq_api_key
+        
+    else:  # OpenRouter
+        if not openrouter_api_key or openrouter_api_key == "your_openrouter_api_key":
+            if "openrouter_api_key" in st.session_state:
+                openrouter_api_key = st.session_state.openrouter_api_key
+            else:
+                openrouter_api_key = st.sidebar.text_input("Enter OpenRouter API Key:", type="password", key="openrouter_input")
+                if openrouter_api_key:
+                    st.session_state.openrouter_api_key = openrouter_api_key
+        
+        # Store selected LLM type
+        st.session_state.selected_llm_type = "openrouter"
+        st.session_state.selected_api_key = openrouter_api_key
+        
+        # Show model selection if OpenRouter is selected
+        if openrouter_api_key:
+            openrouter_model = st.sidebar.selectbox(
+                "Select OpenRouter Model:",
+                [
+                    "anthropic/claude-3-opus",
+                    "anthropic/claude-3-sonnet", 
+                    "anthropic/claude-3-haiku",
+                    "meta-llama/llama-3-70b-instruct",
+                    "google/gemini-1.5-pro",
+                    "deepseek/deepseek-chat-v3-0324:free"
+                ],
+                index=1,
+                help="Choose which model to use with OpenRouter. Higher-tier models may offer better quality but might be more expensive."
+            )
+            st.session_state.openrouter_model = openrouter_model
     
     # Source type selection
     st.subheader("Select Content Source")
@@ -519,11 +567,31 @@ def notewriter_page():
                 
                 learning_style = result[0] if result else "Visual"
                 
-                # Import the notewriter agent
-                notewriter = get_notewriter()
+                # Get LLM selection from session state
+                selected_llm_type = st.session_state.get('selected_llm_type', 'groq')
+                api_key = st.session_state.get('selected_api_key', '')
+                
+                # Check if we have the required API key
+                if not api_key:
+                    if selected_llm_type == 'groq':
+                        st.error("Please enter your Groq API key to enable AI processing.")
+                    else:
+                        st.error("Please enter your OpenRouter API key to enable AI processing.")
+                    return
+                
+                # Initialize the notewriter agent with the selected LLM
+                if selected_llm_type == 'groq':
+                    notewriter = get_notewriter(llm_type="groq", groq_api_key=api_key)
+                else:
+                    # Get the selected OpenRouter model
+                    openrouter_model = st.session_state.get('openrouter_model', 'anthropic/claude-3-sonnet')
+                    notewriter = get_notewriter(llm_type="openrouter", openrouter_api_key=api_key, openrouter_model=openrouter_model)
                 
                 if not notewriter:
-                    st.error("Failed to initialize the Notewriter agent. Please check your Groq API key.")
+                    if selected_llm_type == 'groq':
+                        st.error("Failed to initialize the Notewriter agent. Please check your Groq API key.")
+                    else:
+                        st.error("Failed to initialize the Notewriter agent. Please check your OpenRouter API key.")
                     return
                 
                 # Process content using the appropriate method
@@ -563,30 +631,27 @@ def notewriter_page():
                                 
                                 # If Mind Map format is selected, generate and show the mindmap
                                 if output_format == "Mind Map":
-                                    if notewriter.openrouter_llm:
-                                        with st.spinner("Generating Mind Map visualization..."):
-                                            # Check if we already have a mindmap for this note
-                                            existing_mindmap = notewriter.get_mindmap(result["note_id"])
-                                            
-                                            if existing_mindmap:
-                                                mindmap_content = existing_mindmap
-                                                st.success("Using previously generated mind map")
-                                            else:
-                                                # Generate a new mindmap
-                                                mindmap_content = notewriter.generate_mindmap(result["content"])
-                                                # Save it to the database for future use
-                                                notewriter.save_mindmap(result["note_id"], mindmap_content)
-                                                st.success("Mind map generated and saved for future use")
-                                            
-                                            # Display the mindmap
-                                            st.subheader("Mind Map Visualization")
-                                            st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
-                                            
-                                            # Use the streamlit-markmap component to visualize
-                                            from streamlit_markmap import markmap
-                                            markmap(mindmap_content, height=600)
-                                    else:
-                                        st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
+                                    with st.spinner("Generating Mind Map visualization..."):
+                                        # Check if we already have a mindmap for this note
+                                        existing_mindmap = notewriter.get_mindmap(result["note_id"])
+                                        
+                                        if existing_mindmap:
+                                            mindmap_content = existing_mindmap
+                                            st.success("Using previously generated mind map")
+                                        else:
+                                            # Generate a new mindmap
+                                            mindmap_content = notewriter.generate_mindmap(result["content"])
+                                            # Save it to the database for future use
+                                            notewriter.save_mindmap(result["note_id"], mindmap_content)
+                                            st.success("Mind map generated and saved for future use")
+                                        
+                                        # Display the mindmap
+                                        st.subheader("Mind Map Visualization")
+                                        st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
+                                        
+                                        # Use the streamlit-markmap component to visualize
+                                        from streamlit_markmap import markmap
+                                        markmap(mindmap_content, height=600)
                             else:
                                 st.error(f"Error: {result['error']}")
                             
@@ -627,30 +692,29 @@ def notewriter_page():
                             
                             # If Mind Map format is selected, generate and show the mindmap
                             if output_format == "Mind Map":
-                                if notewriter.openrouter_llm:
-                                    with st.spinner("Generating Mind Map visualization..."):
-                                        # Check if we already have a mindmap for this note
-                                        existing_mindmap = notewriter.get_mindmap(result["note_id"])
-                                        
-                                        if existing_mindmap:
-                                            mindmap_content = existing_mindmap
-                                            st.success("Using previously generated mind map")
-                                        else:
-                                            # Generate a new mindmap
-                                            mindmap_content = notewriter.generate_mindmap(result["content"])
-                                            # Save it to the database for future use
-                                            notewriter.save_mindmap(result["note_id"], mindmap_content)
-                                            st.success("Mind map generated and saved for future use")
-                                        
-                                        # Display the mindmap
-                                        st.subheader("Mind Map Visualization")
-                                        st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
-                                        
-                                        # Use the streamlit-markmap component to visualize
-                                        from streamlit_markmap import markmap
-                                        markmap(mindmap_content, height=600)
-                                else:
-                                    st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
+                                with st.spinner("Generating Mind Map visualization..."):
+                                    # Check if we already have a mindmap for this note
+                                    existing_mindmap = notewriter.get_mindmap(result["note_id"])
+                                    
+                                    if existing_mindmap:
+                                        mindmap_content = existing_mindmap
+                                        st.success("Using previously generated mind map")
+                                    else:
+                                        # Generate a new mindmap
+                                        mindmap_content = notewriter.generate_mindmap(result["content"])
+                                        # Save it to the database for future use
+                                        notewriter.save_mindmap(result["note_id"], mindmap_content)
+                                        st.success("Mind map generated and saved for future use")
+                                    
+                                    # Display the mindmap
+                                    st.subheader("Mind Map Visualization")
+                                    st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
+                                    
+                                    # Use the streamlit-markmap component to visualize
+                                    from streamlit_markmap import markmap
+                                    markmap(mindmap_content, height=600)
+                            else:
+                                st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
                         else:
                             # Special handling for YouTube extraction failures
                             if source_type_code == "youtube":
@@ -836,37 +900,33 @@ def notewriter_page():
                         st.rerun()
                 
                 with mindmap_tab:
-                    if notewriter.openrouter_llm:
-                        # Check if we already have a mindmap for this note
-                        existing_mindmap = notewriter.get_mindmap(note['id'])
+                    # Check if we already have a mindmap for this note
+                    existing_mindmap = notewriter.get_mindmap(note['id'])
+                    
+                    if existing_mindmap:
+                        # Use the existing mindmap
+                        st.success("Loading saved mind map")
                         
-                        if existing_mindmap:
-                            # Use the existing mindmap
-                            st.success("Loading saved mind map")
+                        # Display the mindmap
+                        st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
+                        
+                        # Use the streamlit-markmap component to visualize
+                        from streamlit_markmap import markmap
+                        markmap(existing_mindmap, height=600)
+                    else:
+                        # Generate a new mindmap
+                        with st.spinner("Generating Mind Map visualization..."):
+                            mindmap_content = notewriter.generate_mindmap(note['content'])
+                            # Save the mindmap for future use
+                            notewriter.save_mindmap(note['id'], mindmap_content)
+                            st.success("Mind map generated and saved for future use")
                             
                             # Display the mindmap
                             st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
                             
                             # Use the streamlit-markmap component to visualize
                             from streamlit_markmap import markmap
-                            markmap(existing_mindmap, height=600)
-                        else:
-                            # Generate a new mindmap
-                            with st.spinner("Generating Mind Map visualization..."):
-                                mindmap_content = notewriter.generate_mindmap(note['content'])
-                                
-                                # Save the mindmap for future use
-                                notewriter.save_mindmap(note['id'], mindmap_content)
-                                st.success("Mind map generated and saved for future use")
-                                
-                                # Display the mindmap
-                                st.info("Below is an interactive mind map of your notes. You can expand/collapse branches by clicking on them.")
-                                
-                                # Use the streamlit-markmap component to visualize
-                                from streamlit_markmap import markmap
-                                markmap(mindmap_content, height=600)
-                    else:
-                        st.warning("Mind Map generation requires OpenRouter API key. Please add it to your .env file.")
+                            markmap(mindmap_content, height=600)
                 
                 with edit_tab:
                     # Create a form for editing
@@ -2916,6 +2976,592 @@ def quiz_analyze_page():
                         st.markdown("---")
         else:
             st.info("You haven't taken any quizzes yet. Create a quiz to see your history here.")
+
+def dashboard_page():
+    st.title("📊 Academic Analytics Dashboard")
+    
+    st.markdown("""
+    This dashboard provides a comprehensive overview of all students in the system,
+    their activities, performance metrics, and trends over time.
+    """)
+    
+    # Check if user has admin privileges (for now, let's just allow access for all users)
+    if 'user_id' not in st.session_state:
+        st.warning("Please set up your profile first on the Home page.")
+        return
+    
+    # Create tabs for different views
+    overview_tab, students_tab, activity_tab, performance_tab = st.tabs([
+        "System Overview", "Student Leaderboard", "Activity Metrics", "Performance Analytics"
+    ])
+    
+    # Get database connection
+    conn = init_connection()
+    cursor = conn.cursor()
+    
+    # Get total number of students
+    cursor.execute("SELECT COUNT(*) FROM students")
+    total_students = cursor.fetchone()[0]
+    
+    # Get total number of notes
+    cursor.execute("SELECT COUNT(*) FROM notes")
+    total_notes = cursor.fetchone()[0]
+    
+    # Get total number of tasks
+    cursor.execute("SELECT COUNT(*) FROM tasks")
+    total_tasks = cursor.fetchone()[0]
+    
+    # Get total number of quizzes
+    cursor.execute("""
+        SELECT COUNT(*) FROM quizzes
+    """)
+    total_quizzes = cursor.fetchone()[0] if cursor.rowcount > 0 else 0
+    
+    # System Overview Tab
+    with overview_tab:
+        st.header("System Overview")
+        
+        # Summary metrics in columns
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Students", total_students)
+        with col2:
+            st.metric("Total Notes", total_notes)
+        with col3:
+            st.metric("Total Tasks", total_tasks)
+        with col4:
+            st.metric("Total Quizzes", total_quizzes)
+        
+        # Activity over time
+        st.subheader("System Activity Over Time")
+        
+        # Get activity by date (last 30 days)
+        cursor.execute("""
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as count
+            FROM notes
+            WHERE created_at >= NOW() - INTERVAL '30 days'
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at)
+        """)
+        
+        notes_activity = cursor.fetchall()
+        
+        cursor.execute("""
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as count
+            FROM tasks
+            WHERE created_at >= NOW() - INTERVAL '30 days'
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at)
+        """)
+        
+        tasks_activity = cursor.fetchall()
+        
+        # Create activity dataframe
+        if notes_activity or tasks_activity:
+            activity_dates = set()
+            notes_dict = {}
+            tasks_dict = {}
+            
+            for date, count in notes_activity:
+                activity_dates.add(date)
+                notes_dict[date] = count
+            
+            for date, count in tasks_activity:
+                activity_dates.add(date)
+                tasks_dict[date] = count
+            
+            activity_data = []
+            for date in sorted(activity_dates):
+                activity_data.append({
+                    "Date": date,
+                    "Notes Created": notes_dict.get(date, 0),
+                    "Tasks Created": tasks_dict.get(date, 0)
+                })
+            
+            if activity_data:
+                activity_df = pd.DataFrame(activity_data)
+                
+                # Plot activity chart
+                st.line_chart(
+                    activity_df.set_index("Date")[["Notes Created", "Tasks Created"]]
+                )
+        else:
+            st.info("No activity data available for the past 30 days.")
+        
+        # Course subject distribution
+        st.subheader("Subject Distribution")
+        
+        cursor.execute("""
+            SELECT 
+                subject,
+                COUNT(*) as count
+            FROM notes
+            WHERE subject IS NOT NULL AND subject != ''
+            GROUP BY subject
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        
+        subject_data = cursor.fetchall()
+        
+        if subject_data:
+            subject_df = pd.DataFrame(subject_data, columns=["Subject", "Count"])
+            
+            # Create bar chart
+            fig, ax = plt.subplots(figsize=(10, 6))
+            bars = ax.bar(subject_df["Subject"], subject_df["Count"])
+            
+            # Add labels and title
+            ax.set_xlabel("Subject")
+            ax.set_ylabel("Number of Notes")
+            ax.set_title("Most Popular Subjects")
+            
+            # Rotate x-axis labels
+            plt.xticks(rotation=45, ha="right")
+            plt.tight_layout()
+            
+            st.pyplot(fig)
+        else:
+            st.info("No subject data available.")
+    
+    # Student Leaderboard Tab
+    with students_tab:
+        st.header("Student Leaderboard")
+        
+        # Get student data
+        cursor.execute("""
+            SELECT 
+                s.id,
+                s.name,
+                s.learning_style,
+                COUNT(DISTINCT n.id) as notes_count,
+                COUNT(DISTINCT t.id) as tasks_count,
+                COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) as completed_tasks
+            FROM 
+                students s
+                LEFT JOIN notes n ON s.id = n.student_id
+                LEFT JOIN tasks t ON s.id = t.student_id
+            GROUP BY 
+                s.id, s.name, s.learning_style
+            ORDER BY 
+                notes_count DESC, completed_tasks DESC
+        """)
+        
+        student_data = cursor.fetchall()
+        
+        # Get quiz performance
+        quiz_data = {}
+        try:
+            cursor.execute("""
+                SELECT 
+                    student_id,
+                    AVG(score_percentage) as avg_score,
+                    COUNT(*) as quiz_count
+                FROM quizzes
+                GROUP BY student_id
+            """)
+            
+            for student_id, avg_score, quiz_count in cursor.fetchall():
+                quiz_data[student_id] = {
+                    "avg_score": avg_score,
+                    "quiz_count": quiz_count
+                }
+        except:
+            pass  # Handle case where quizzes table doesn't exist
+        
+        # Create student leaderboard dataframe
+        if student_data:
+            leaderboard_data = []
+            for student_id, name, learning_style, notes_count, tasks_count, completed_tasks in student_data:
+                # Calculate productivity score
+                productivity = notes_count * 5 + completed_tasks * 3
+                
+                # Get quiz data if available
+                avg_quiz_score = 0
+                quiz_count = 0
+                if student_id in quiz_data:
+                    avg_quiz_score = float(quiz_data[student_id]["avg_score"])
+                    quiz_count = quiz_data[student_id]["quiz_count"]
+                
+                # Calculate overall score
+                overall_score = productivity
+                if quiz_count > 0:
+                    overall_score += avg_quiz_score * 0.2
+                
+                leaderboard_data.append({
+                    "ID": student_id,
+                    "Name": name,
+                    "Learning Style": learning_style or "Not specified",
+                    "Notes": notes_count,
+                    "Tasks": tasks_count,
+                    "Completed Tasks": completed_tasks,
+                    "Quizzes Taken": quiz_count,
+                    "Avg. Quiz Score": f"{avg_quiz_score:.1f}%" if quiz_count > 0 else "N/A",
+                    "Productivity Score": productivity,
+                    "Overall Score": int(overall_score)
+                })
+            
+            # Sort by overall score
+            leaderboard_df = pd.DataFrame(leaderboard_data).sort_values(by="Overall Score", ascending=False)
+            
+            # Reset index to start from 1 and rename the index column
+            leaderboard_df = leaderboard_df.reset_index(drop=True)
+            leaderboard_df.index = leaderboard_df.index + 1  # Make index start from 1 instead of 0
+            
+            # Display leaderboard with proper index column name
+            st.dataframe(leaderboard_df, use_container_width=True, hide_index=False)
+            
+            # Highlight top performers
+            if len(leaderboard_df) > 0:
+                st.subheader("🏆 Top Performers")
+                
+                top3_cols = st.columns(min(3, len(leaderboard_df)))
+                
+                for i, (_, row) in enumerate(leaderboard_df.head(3).iterrows()):
+                    with top3_cols[i]:
+                        st.markdown(f"### {i+1}. {row['Name']}")
+                        st.info(f"Score: **{row['Overall Score']}**")
+                        st.caption(f"Notes: {row['Notes']} | Tasks: {row['Tasks']} | Completed: {row['Completed Tasks']}")
+        else:
+            st.info("No student data available.")
+    
+    # Activity Metrics Tab
+    with activity_tab:
+        st.header("Student Activity Metrics")
+        
+        # Select a specific student to analyze
+        cursor.execute("SELECT id, name FROM students ORDER BY name")
+        students = cursor.fetchall()
+        
+        if students:
+            student_options = ["All Students"] + [f"{name} (ID: {id})" for id, name in students]
+            selected_student = st.selectbox("Select Student:", student_options)
+            
+            # Filter condition based on selection
+            if selected_student == "All Students":
+                student_filter = ""
+                student_id_param = None
+            else:
+                student_id = selected_student.split("(ID: ")[1].split(")")[0]
+                student_filter = "WHERE student_id = %s"
+                student_id_param = int(student_id)
+            
+            # Notes activity over time
+            st.subheader("Notes Creation Activity")
+            
+            if student_id_param:
+                cursor.execute(f"""
+                    SELECT 
+                        DATE(created_at) as date,
+                        COUNT(*) as count
+                    FROM notes
+                    {student_filter}
+                    GROUP BY DATE(created_at)
+                    ORDER BY DATE(created_at)
+                """, (student_id_param,) if student_id_param else ())
+            else:
+                cursor.execute(f"""
+                    SELECT 
+                        DATE(created_at) as date,
+                        COUNT(*) as count
+                    FROM notes
+                    GROUP BY DATE(created_at)
+                    ORDER BY DATE(created_at)
+                """)
+                
+            notes_by_date = cursor.fetchall()
+            
+            if notes_by_date:
+                notes_df = pd.DataFrame(notes_by_date, columns=["Date", "Notes Created"])
+                st.line_chart(notes_df.set_index("Date"))
+            else:
+                st.info("No notes activity data available.")
+            
+            # Task completion metrics
+            st.subheader("Task Completion Metrics")
+            
+            if student_id_param:
+                cursor.execute(f"""
+                    SELECT 
+                        status,
+                        COUNT(*) as count
+                    FROM tasks
+                    {student_filter}
+                    GROUP BY status
+                """, (student_id_param,) if student_id_param else ())
+            else:
+                cursor.execute(f"""
+                    SELECT 
+                        status,
+                        COUNT(*) as count
+                    FROM tasks
+                    GROUP BY status
+                """)
+                
+            task_status = cursor.fetchall()
+            
+            if task_status:
+                status_df = pd.DataFrame(task_status, columns=["Status", "Count"])
+                
+                # Create pie chart
+                fig, ax = plt.subplots()
+                ax.pie(status_df["Count"], labels=status_df["Status"], autopct="%1.1f%%", startangle=90)
+                ax.axis("equal")  # Equal aspect ratio ensures that pie is drawn as a circle
+                st.pyplot(fig)
+            else:
+                st.info("No task status data available.")
+        else:
+            st.info("No students available.")
+    
+    # Performance Analytics Tab
+    with performance_tab:
+        st.header("Learning Performance Analytics")
+        
+        # Quiz performance over time
+        st.subheader("Quiz Performance Trends")
+        
+        try:
+            # Select a specific student to analyze
+            cursor.execute("SELECT id, name FROM students ORDER BY name")
+            students = cursor.fetchall()
+            
+            if students:
+                student_options = ["All Students"] + [f"{name} (ID: {id})" for id, name in students]
+                selected_quiz_student = st.selectbox("Select Student for Quiz Analysis:", student_options, key="quiz_student")
+                
+                # Filter condition based on selection
+                if selected_quiz_student == "All Students":
+                    quiz_student_filter = ""
+                    quiz_student_id_param = None
+                else:
+                    quiz_student_id = selected_quiz_student.split("(ID: ")[1].split(")")[0]
+                    quiz_student_filter = "WHERE student_id = %s"
+                    quiz_student_id_param = int(quiz_student_id)
+                
+                if quiz_student_id_param:
+                    cursor.execute(f"""
+                        SELECT 
+                            created_at as date,
+                            title,
+                            score_percentage
+                        FROM quizzes
+                        {quiz_student_filter}
+                        ORDER BY created_at
+                    """, (quiz_student_id_param,) if quiz_student_id_param else ())
+                else:
+                    cursor.execute(f"""
+                        SELECT 
+                            created_at as date,
+                            title,
+                            score_percentage
+                        FROM quizzes
+                        ORDER BY created_at
+                    """)
+                    
+                quiz_performance = cursor.fetchall()
+                
+                if quiz_performance:
+                    quiz_df = pd.DataFrame(quiz_performance, columns=["Date", "Title", "Score"])
+                    
+                    # Convert Score from Decimal to float for calculations
+                    quiz_df["Score"] = quiz_df["Score"].astype(float)
+                    
+                    # Create scatter plot with trend line
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    
+                    ax.scatter(range(len(quiz_df)), quiz_df["Score"], label="Quiz Scores")
+                    
+                    # Add trend line if there are enough points
+                    if len(quiz_df) >= 2:
+                        z = np.polyfit(range(len(quiz_df)), quiz_df["Score"], 1)
+                        p = np.poly1d(z)
+                        ax.plot(range(len(quiz_df)), p(range(len(quiz_df))), "r--", label="Trend")
+                        
+                        # Determine if improving or declining
+                        trend_direction = "improving" if z[0] > 0 else "declining"
+                        st.info(f"Overall quiz performance is **{trend_direction}**. Trend slope: {z[0]:.2f}% per quiz.")
+                    
+                    # Set labels and ticks
+                    ax.set_xlabel("Quiz Number")
+                    ax.set_ylabel("Score (%)")
+                    ax.set_title("Quiz Performance Over Time")
+                    ax.set_xticks(range(len(quiz_df)))
+                    ax.set_xticklabels([f"Quiz {i+1}" for i in range(len(quiz_df))], rotation=45)
+                    ax.legend()
+                    plt.tight_layout()
+                    
+                    st.pyplot(fig)
+                    
+                    # Display table of quiz results
+                    st.subheader("Quiz Results")
+                    formatted_quiz_df = quiz_df.copy()
+                    formatted_quiz_df["Date"] = formatted_quiz_df["Date"].dt.strftime("%Y-%m-%d %H:%M")
+                    formatted_quiz_df["Score"] = formatted_quiz_df["Score"].apply(lambda x: f"{x:.1f}%")
+                    st.dataframe(formatted_quiz_df, use_container_width=True)
+                else:
+                    st.info("No quiz performance data available.")
+            else:
+                st.info("No students available.")
+        except Exception as e:
+            st.error(f"Error analyzing quiz performance: {str(e)}")
+        
+        # Subject proficiency (based on quiz scores by subject)
+        st.subheader("Subject Proficiency")
+        
+        try:
+            # Get average scores by subject
+            cursor.execute("""
+                SELECT 
+                    subject,
+                    AVG(score_percentage) as avg_score,
+                    COUNT(*) as quiz_count
+                FROM quizzes
+                GROUP BY subject
+                HAVING COUNT(*) > 0
+                ORDER BY avg_score DESC
+            """)
+            
+            subject_scores = cursor.fetchall()
+            
+            if subject_scores:
+                subject_prof_df = pd.DataFrame(subject_scores, columns=["Subject", "Average Score", "Quiz Count"])
+                
+                # Format columns
+                subject_prof_df["Average Score"] = subject_prof_df["Average Score"].apply(lambda x: f"{x:.1f}%")
+                
+                st.dataframe(subject_prof_df, use_container_width=True)
+                
+                # Create bar chart for subject proficiency
+                chart_data = pd.DataFrame(subject_scores, columns=["Subject", "Average Score", "Quiz Count"])
+                
+                st.bar_chart(chart_data.set_index("Subject")["Average Score"])
+            else:
+                st.info("No subject proficiency data available.")
+        except Exception as e:
+            st.error(f"Error analyzing subject proficiency: {str(e)}")
+    
+    # Add a new section for user management below all tabs
+    st.markdown("---")
+    st.header("🔒 User Management")
+    
+    # Create expandable section for dangerous operations
+    with st.expander("Delete Student Profile"):
+        st.warning("⚠️ **WARNING**: Deleting a student will permanently remove all their data including notes, tasks, quizzes, and other related information. This action cannot be undone.")
+        
+        # Get list of students
+        cursor.execute("SELECT id, name FROM students ORDER BY name")
+        students_list = cursor.fetchall()
+        
+        if students_list:
+            # Create dropdown to select student
+            delete_student_options = [f"{name} (ID: {id})" for id, name in students_list]
+            selected_student_to_delete = st.selectbox(
+                "Select student to delete:", 
+                delete_student_options,
+                key="delete_student_select"
+            )
+            
+            # Extract the student ID from the selection
+            student_id_to_delete = int(selected_student_to_delete.split("(ID: ")[1].split(")")[0])
+            student_name_to_delete = selected_student_to_delete.split(" (ID:")[0]
+            
+            # Confirmation checkbox
+            confirm_delete = st.checkbox(f"I confirm that I want to delete {student_name_to_delete} and ALL their data")
+            
+            # Delete button
+            if st.button("Delete Student", type="primary", disabled=not confirm_delete):
+                try:
+                    # First, display what will be deleted
+                    cursor.execute("SELECT COUNT(*) FROM notes WHERE student_id = %s", (student_id_to_delete,))
+                    notes_count = cursor.fetchone()[0]
+                    
+                    cursor.execute("SELECT COUNT(*) FROM tasks WHERE student_id = %s", (student_id_to_delete,))
+                    tasks_count = cursor.fetchone()[0]
+                    
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM quizzes WHERE student_id = %s", (student_id_to_delete,))
+                        quizzes_count = cursor.fetchone()[0]
+                    except:
+                        quizzes_count = 0
+                    
+                    st.info(f"Deleting: {notes_count} notes, {tasks_count} tasks, {quizzes_count} quizzes, and student profile.")
+                    
+                    # Close current connection/cursor as they might have active session parameters
+                    cursor.close()
+                    conn.close()
+                    
+                    # Create fresh connection for deletion operations
+                    delete_conn = init_connection()
+                    delete_cursor = delete_conn.cursor()
+                    
+                    # Delete all related data - using individual statements instead of transaction
+                    # 1. Delete quizzes (if table exists)
+                    try:
+                        delete_cursor.execute("DELETE FROM quizzes WHERE student_id = %s", (student_id_to_delete,))
+                        delete_conn.commit()
+                    except Exception as quiz_error:
+                        st.warning(f"Note: Could not delete quizzes: {str(quiz_error)}")
+                    
+                    # 2. Delete tasks
+                    delete_cursor.execute("DELETE FROM tasks WHERE student_id = %s", (student_id_to_delete,))
+                    delete_conn.commit()
+                    
+                    # 3. Delete notes
+                    delete_cursor.execute("DELETE FROM notes WHERE student_id = %s", (student_id_to_delete,))
+                    delete_conn.commit()
+                    
+                    # 4. Delete knowledge_base entries related to the student
+                    try:
+                        # Use string comparison instead of JSON operators if possible
+                        delete_cursor.execute("DELETE FROM knowledge_base WHERE metadata::text LIKE %s", 
+                                       (f'%"student_id": "{student_id_to_delete}"%',))
+                        delete_conn.commit()
+                    except Exception as kb_error:
+                        st.warning(f"Note: Could not delete some knowledge base entries: {str(kb_error)}")
+                    
+                    # 5. Finally delete the student
+                    delete_cursor.execute("DELETE FROM students WHERE id = %s", (student_id_to_delete,))
+                    delete_conn.commit()
+                    
+                    # Close deletion connection
+                    delete_cursor.close()
+                    delete_conn.close()
+                    
+                    # Create new connection for the rest of the page
+                    conn = init_connection()
+                    cursor = conn.cursor()
+                    
+                    st.success(f"Successfully deleted student {student_name_to_delete} and all related data.")
+                    
+                    # Add rerun button to refresh the page
+                    if st.button("Refresh Dashboard"):
+                        st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Error deleting student: {str(e)}")
+                    
+                    # Try to ensure we have a valid connection for the rest of the page
+                    try:
+                        if 'delete_cursor' in locals() and delete_cursor:
+                            delete_cursor.close()
+                        if 'delete_conn' in locals() and delete_conn:
+                            delete_conn.close()
+                        
+                        conn = init_connection()
+                        cursor = conn.cursor()
+                    except:
+                        pass
+        else:
+            st.info("No students available.")
+    
+    # Close database connections
+    cursor.close()
+    conn.close()
 
 if __name__ == "__main__":
     # Check if navigation is set in session state
