@@ -437,14 +437,15 @@ def notewriter_page():
             openrouter_model = st.sidebar.selectbox(
                 "Select OpenRouter Model:",
                 [
+                    "deepseek/deepseek-chat-v3-0324:free",
                     "anthropic/claude-3-opus",
                     "anthropic/claude-3-sonnet", 
                     "anthropic/claude-3-haiku",
                     "meta-llama/llama-3-70b-instruct",
-                    "google/gemini-1.5-pro",
-                    "deepseek/deepseek-chat-v3-0324:free"
+                    "google/gemini-1.5-pro"
+                    
                 ],
-                index=1,
+                index=0,
                 help="Choose which model to use with OpenRouter. Higher-tier models may offer better quality but might be more expensive."
             )
             st.session_state.openrouter_model = openrouter_model

@@ -113,7 +113,7 @@ class Advisor:
         """, (student_id,))
         
         completed_recent = cursor.fetchone()[0]
-        
+
         # Get total tasks due in the last 14 days
         cursor.execute("""
             SELECT COUNT(*) 
