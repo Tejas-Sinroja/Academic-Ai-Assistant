@@ -495,25 +495,39 @@ class Notewriter:
             elif source_type == "topic":
                 # For topic-based research, we have a more specialized prompt
                 system_message = f"""
-                Process the following research on {subject} into comprehensive study notes.
+                Process the following research on {subject} into comprehensive study notes with proper academic citations.
                 {focus_instruction}
                 Tailor the output for a student with a {learning_style} learning style.
-                
+
                 This research includes content from multiple sources including web pages and YouTube videos.
-                
+
                 Create well-structured, comprehensive study notes that:
-                1. Begin with an overview of {subject}
-                2. Organize the content into logical sections with clear headings
-                3. Identify and highlight key concepts, definitions, and examples
-                4. Synthesize information from multiple sources into a coherent narrative
-                5. Include source citations for important information
-                6. End with a summary of the most important points
-                7. Add learning recommendations specifically for {learning_style} learners
+                1. Begin with an overview of {subject} and research methodology
+                2. Organize content into logical sections with clear headings
+                3. Clearly identify and cite sources for all key information:
+                   - For web sources: [Source #](URL) - Title
+                   - For videos: [Video #](URL) - Title
+                4. Synthesize information while maintaining clear attribution
+                5. Include direct quotes with proper citation when appropriate
+                6. Highlight key concepts, definitions, and examples with sources
+                7. End with a summary and bibliography listing all sources
+
+                Citation Format Examples:
+                Web Sources:
+                - "According to [Web Source 1](https://example.com) titled 'Article Name', the key concept is..."
+                - "As reported by [Web Source 2](https://example.org), researchers found that..."
                 
-                Format the notes in clean Markdown, using appropriate heading levels, bullet points, 
-                and emphasis to create a visually structured document.
-                
-                BE SURE TO CITE THE SOURCES when presenting information from specific websites or videos.
+                Video Sources:
+                - "As demonstrated in [Video 1](https://youtube.com/watch?v=123) 'Video Title', the process involves..."
+                - "The experiment shown in [Video 2](https://youtube.com/watch?v=456) illustrates..."
+
+                Format requirements:
+                - Use Markdown with clear headings and bullet points
+                - Include a References section at the end listing all sources
+                - Maintain academic integrity by properly attributing all sources
+                - Adapt content presentation for {learning_style} learners
+
+                Important: Failure to properly cite sources will result in academic dishonesty.
                 """
             else:  # text
                 system_message = f"""

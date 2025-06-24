@@ -361,24 +361,29 @@ async def research_topic(topic: str, search_depth: str = "ordinary") -> Dict[str
         except Exception as e:
             print(f"Error extracting YouTube content from {yt_result['url']}: {str(e)}")
     
-    # Combine all content for processing
+    # Combine all content with clear source attribution
     combined_content = f"# Research on: {topic}\n\n"
+    combined_content += f"Search Depth: {search_depth.capitalize()}\n\n"
+
+    # Add web sources with clear citation format
+    if result['web_sources']:
+        combined_content += "## Web Research Sources\n\n"
+        for i, source in enumerate(result['web_sources']):
+            combined_content += f"### [Web Source {i+1}] {source['title']}\n"
+            combined_content += f"**URL:** {source['url']}\n"
+            combined_content += f"**Summary:** {source['snippet']}\n\n"
+            combined_content += f"**Key Content:**\n{source['content'][:1000]}\n\n"
+            combined_content += "---\n\n"
     
-    # Add web sources
-    combined_content += "## Web Sources\n\n"
-    for i, source in enumerate(result['web_sources']):
-        combined_content += f"### Source {i+1}: {source['title']}\n"
-        combined_content += f"URL: {source['url']}\n\n"
-        combined_content += f"Summary: {source['snippet']}\n\n"
-        combined_content += f"Content excerpt: {source['content'][:500]}...\n\n"
-    
-    # Add YouTube sources
-    combined_content += "## YouTube Sources\n\n"
-    for i, source in enumerate(result['youtube_sources']):
-        combined_content += f"### YouTube Video {i+1}: {source['title']}\n"
-        combined_content += f"URL: {source['url']}\n\n"
-        transcript_preview = source['content'][:500] + "..." if len(source['content']) > 500 else source['content']
-        combined_content += f"Transcript excerpt: {transcript_preview}\n\n"
+    # Add YouTube sources with clear citation format
+    if result['youtube_sources']:
+        combined_content += "## Video Research Sources\n\n"
+        for i, source in enumerate(result['youtube_sources']):
+            combined_content += f"### [Video Source {i+1}] {source['title']}\n"
+            combined_content += f"**URL:** {source['url']}\n"
+            transcript_preview = source['content'][:1000] + "..." if len(source['content']) > 1000 else source['content']
+            combined_content += f"**Transcript Excerpt:**\n{transcript_preview}\n\n"
+            combined_content += "---\n\n"
     
     result['combined_content'] = combined_content
     return result 
