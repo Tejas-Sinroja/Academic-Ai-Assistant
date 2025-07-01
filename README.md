@@ -10,200 +10,125 @@ Academic AI Assistant is a powerful multi-agent system designed to transform the
 - **Advisor**: Personalized learning advice based on your profile and academic data
 - **PDF Chat**: Advanced RAG-based chat with PDFs, notes, and multi-source knowledge bases
 - **Quiz & Analyze**: Generate quizzes from your study materials and get AI-powered performance feedback
-- **Profile Management**: Create and manage student profiles with learning styles, academic goals, and performance metrics.
-- **AI-Enhanced Learning Assistant**: Chat with an AI assistant trained on educational resources and personalized to your profile.
-- **Notewriter Agent**: Transform content from various sources (text, web pages, PDFs, YouTube videos) into structured study notes tailored to your learning style.
-- **Study Planner**: Create and manage study plans with time blocks and task prioritization.
-- **Performance Tracking**: Record and analyze academic performance over time.
-- **Resource Management**: Save and organize learning resources and references.
-- **Advisor**: Receive personalized learning strategies and time management advice.
-- **Chatbot Interface**: Ask questions about your academic journey or get assistance with specific topics.
-- **RAG-based PDF Chat**: Interact with your study materials using advanced retrieval-augmented generation.
-- **Multi-Source Knowledge Base**: Combine multiple documents for unified querying.
-- **Quiz & Test Prep**: Generate practice quizzes from your notes and study materials.
+- **Profile Management**: Create and manage student profiles with learning styles, academic goals, and performance metrics
+- **AI-Enhanced Learning Assistant**: Chat with an AI assistant trained on educational resources
+- **Notewriter Agent**: Transform content from various sources into structured study notes
+- **Study Planner**: Create and manage study plans with time blocks and task prioritization
+- **Performance Tracking**: Record and analyze academic performance over time
+- **Resource Management**: Save and organize learning resources and references
+- **Chatbot Interface**: Ask questions about your academic journey or get assistance
+- **RAG-based PDF Chat**: Interact with your study materials using advanced retrieval-augmented generation
+- **Multi-Source Knowledge Base**: Combine multiple documents for unified querying
+- **Quiz & Test Prep**: Generate practice quizzes from your notes and study materials
 
-## Content Processing Features
+## Project Structure
 
-The Academic AI Assistant can process content from multiple sources:
-
-### YouTube Video Notes
-Convert any educational YouTube video into comprehensive study notes:
-1. Simply paste a YouTube URL in the Notewriter section
-2. Select your preferred output format (Comprehensive Notes, Brief Summary, etc.)
-3. The system will extract the video transcript and generate structured notes
-4. Notes include timestamps for easy reference back to the video
-
-### Web Page Notes
-Transform articles, blog posts, and educational websites into study materials:
-1. Enter any webpage URL in the Notewriter section
-2. The system will extract the main content, removing ads and navigation elements
-3. Generate well-organized notes focused on key concepts
-
-### PDF Document Processing
-Extract and process content from PDF lecture slides, research papers, and textbooks:
-1. Upload any PDF file through the simple interface
-2. The system will extract text content page by page
-3. Generate structured notes that preserve the document's organization
-
-### Advanced PDF & Notes Chat (New!)
-The PDF Chat feature allows you to have intelligent conversations with your study materials:
-
-1. **PDF Upload**: Upload any PDF document to chat with its content
-2. **Notes Integration**: Select from your saved notes to ask questions
-3. **Multi-Source Knowledge Base**: Combine multiple documents (notes, PDFs, syllabi) into a unified knowledge base
-4. **Retrieval-Augmented Generation (RAG)**: Get precise answers with references to specific sections of your documents
-5. **Source Attribution**: Every answer includes citations to the specific parts of the documents where the information was found
-6. **Intelligent Chunking**: Documents are automatically divided into optimal segments for accurate retrieval
-7. **Context-Aware Responses**: The system understands the context of your questions in relation to your documents
-
-### Quiz & Analyze Feature (New!)
-Test your knowledge and improve your understanding with the new Quiz & Analyze feature:
-
-1. **Multiple Content Sources**: Generate quizzes from PDFs, notes, or any text content
-2. **Customized Difficulty Levels**: Choose from Easy, Medium, or Hard questions
-3. **Multiple-Choice Format**: Test your knowledge with professionally formatted questions
-4. **Instant Feedback**: See your score and review correct/incorrect answers immediately
-5. **Performance History**: Track your quiz scores over time
-6. **Detailed Review**: Revisit past quizzes to review questions and your responses
-7. **Save Results as Notes**: Save quiz results and analysis to your notes for later review
+```
+Academic-AI-Assistant/
+├── academic_ai_assistant.py       # Main Streamlit application
+├── requirements.txt               # Python dependencies
+├── .env                          # Environment variables
+├── init_db.py                     # Database initialization script
+├── docker-compose.yml             # Docker Compose configuration
+├── Dockerfile                     # Docker configuration
+├── run.py                         # Alternative entry point
+├── src/                           # Core application code
+│   ├── __init__.py
+│   ├── data_manager.py            # Data management utilities
+│   ├── extractors.py              # Content extraction utilities
+│   ├── LLM.py                     # LLM integration and configuration
+│   └── agents/                    # Specialized AI agents
+│       ├── __init__.py
+│       ├── planner.py             # Planner agent
+│       ├── notewriter.py          # Notewriter agent
+│       ├── advisor.py             # Advisor agent
+│       └── coordinator.py         # Coordinator agent
+```
 
 ## Requirements
 
 - Python 3.8+
-- PostgreSQL 12+
-- Groq API key (for all LLM capabilities - this project does not use OpenAI)
+- PostgreSQL 12+ (or Docker for containerized setup)
+- Groq API key (for all LLM capabilities)
 - HuggingFace's all-MiniLM-L6-v2 model (automatically downloaded for embeddings)
 
 ## Installation
 
-1. Clone the repository:
+### Option 1: Local Setup
 
+1. Clone the repository:
 ```bash
 git clone https://github.com/yourusername/Academic-AI-Assistant.git
 cd Academic-AI-Assistant
 ```
 
-2. Install the dependencies:
-
+2. Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
 3. Set up PostgreSQL:
-   - Install PostgreSQL if you haven't already
-   - Update the connection settings in the `.env` file if needed
-   - Run the database initialization script:
-   ```bash
-   python init_db.py
-   ```
-
-4. Create `.env` file with your configurations:
-
+- Install PostgreSQL if not already installed
+- Create a database named `academic_assistant`
+- Update the `.env` file with your database credentials:
 ```
-# PostgreSQL Database Configuration
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=academic_assistant
 DB_USER=postgres
 DB_PASSWORD=postgres
-
-# LLM API Keys
 GROQ_API_KEY=your_groq_api_key
-
-# Application Settings
-DEBUG=True
-SECRET_KEY=your_secret_key_here
 ```
+4. Run the application:
+```bash
+python3 run.py
+```
+
+### Option 2: Docker Setup
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/Academic-AI-Assistant.git
+cd Academic-AI-Assistant
+```
+
+2. Create `.env` file with your configurations (same as above)
+
+3. Build and start containers:
+```bash
+docker-compose up --build
+```
+
+4. Access the application at `http://localhost:8501`
 
 ## Usage
 
-Run the Streamlit application:
+After starting the application, you can:
 
-```bash
-streamlit run academic_ai_assistant.py
-```
+1. Set up your student profile on the Home page
+2. Use the Notewriter to create study materials from various sources
+3. Manage your schedule with the Planner
+4. Get personalized advice from the Advisor
+5. Chat with your study materials using the PDF Chat feature
+6. Test your knowledge with the Quiz & Analyze tool
 
-The application will be available at `http://localhost:8501`.
+## Troubleshooting
 
-## Agent Architecture
+If you encounter issues:
 
-The Academic AI Assistant uses a multi-agent architecture:
+1. Database connection problems:
+- Verify PostgreSQL is running
+- Check your `.env` file credentials
+- Run `python init_db.py` to reset the database
 
-1. **Coordinator Agent**: Orchestrates the interaction between specialized agents and manages the overall system state
-2. **Planner Agent**: Handles calendar integration and schedule optimization
-3. **Notewriter Agent**: Processes academic content and generates study materials
-4. **Advisor Agent**: Provides personalized learning and time management advice
+2. Missing dependencies:
+- Run `pip install -r requirements.txt` again
+- Check for any error messages during installation
 
-These agents work together to provide a comprehensive academic support system.
+3. API key issues:
+- Ensure your Groq API key is valid
+- Check the `.env` file for correct formatting
 
-## Database Structure
+## License
 
-The application uses PostgreSQL to store:
-
-- Student profiles
-- Tasks and deadlines
-- Notes and study materials
-- Knowledge base content (including syllabus data)
-
-## RAG Implementation Details
-
-The PDF Chat feature uses a sophisticated Retrieval-Augmented Generation pipeline:
-
-1. **Document Processing**: PDFs and notes are processed into document objects with metadata
-2. **Text Chunking**: Documents are split into smaller segments with optimal overlap using RecursiveCharacterTextSplitter
-3. **Embedding Generation**: Text chunks are converted to vector embeddings using HuggingFace's all-MiniLM-L6-v2 model
-4. **Vector Storage**: FAISS is used for efficient similarity search
-5. **Query Processing**: User questions are processed to retrieve the most relevant document chunks
-6. **Answer Generation**: The LLM generates answers based only on the retrieved content, ensuring accuracy
-7. **Source Attribution**: Answers include references to the specific chunks or documents used
-
-## Development
-
-### Project Structure
-
-```
-Academic-AI-Assistant/
-├── academic_ai_assistant.py       # Main Streamlit application
-├── requirements.txt               # Dependencies
-├── .env                          # Environment variables
-├── src/
-│   ├── __init__.py
-│   ├── LLM.py                    # LLM integration
-│   ├── extractors.py             # Content extraction utilities
-│   └── agents/
-│       ├── __init__.py
-│       ├── planner.py            # Planner agent
-│       ├── notewriter.py         # Notewriter agent
-│       └── advisor.py            # Advisor agent
-```
-
-### Adding New Features
-
-To add new features:
-
-1. Develop the functionality in the appropriate agent module
-2. Update the corresponding Streamlit page in `academic_ai_assistant.py`
-3. Update any necessary database tables
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Acknowledgments
-
-- LangChain for RAG components and LLM integration
-- FAISS for vector search capabilities 
-- HuggingFace for embedding models
-- Streamlit for the web interface
-- Groq for LLM API access
-
-## LLM Integration
-
-The application exclusively uses Groq's powerful LLMs (via ChatGroq) to power all AI features:
-
-1. **Chat Interface**: General academic assistance on the home page
-2. **Content Processing**: Convert lecture notes and readings into structured study materials
-3. **Personalized Advice**: Generate tailored studying advice based on learning style and profile
-4. **Document Q&A**: Answer questions about your study materials with RAG-enhanced precision
-
-You'll need a Groq API key to use these features. The application is designed to work with Groq's models for optimal performance.
+This project is licensed under the MIT License - see the LICENSE file for details.

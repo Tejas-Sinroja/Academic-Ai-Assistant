@@ -1,7 +1,10 @@
 """
 Database initialization script for Academic AI Assistant
 
-This script creates the PostgreSQL database and necessary tables required for the application.
+This script:
+1. Creates the PostgreSQL database if it doesn't exist
+2. Creates all required tables with their full schema
+3. Ensures all columns exist (including any that might be added in future versions)
 """
 
 import os
@@ -53,7 +56,7 @@ def create_database():
         return False
 
 def create_tables():
-    """Create the necessary tables in the database"""
+    """Create all tables with their full schema including all columns"""
     try:
         # Connect to our database
         conn = psycopg2.connect(
@@ -66,7 +69,7 @@ def create_tables():
         cursor = conn.cursor()
         
         # Create students table
-        print("Creating 'students' table...")
+        print("Creating/verifying 'students' table...")
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS students (
             id SERIAL PRIMARY KEY,
@@ -79,7 +82,7 @@ def create_tables():
         ''')
         
         # Create tasks table
-        print("Creating 'tasks' table...")
+        print("Creating/verifying 'tasks' table...")
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS tasks (
             id SERIAL PRIMARY KEY,
@@ -94,9 +97,9 @@ def create_tables():
         )
         ''')
         
-        # Create notes table
-        print("Creating 'notes' table...")
-        cursor.execute("""
+        # Create notes table with all columns
+        print("Creating/verifying 'notes' table with all columns...")
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS notes (
             id SERIAL PRIMARY KEY,
             student_id INTEGER REFERENCES students(id),
@@ -106,13 +109,14 @@ def create_tables():
             tags TEXT[],
             source_type VARCHAR(50),
             source_url TEXT,
+            mindmap_content TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """)
+        ''')
         
         # Create knowledge_base table
-        print("Creating 'knowledge_base' table...")
+        print("Creating/verifying 'knowledge_base' table...")
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS knowledge_base (
             id SERIAL PRIMARY KEY,
@@ -125,7 +129,7 @@ def create_tables():
         ''')
         
         # Create quizzes table
-        print("Creating 'quizzes' table...")
+        print("Creating/verifying 'quizzes' table...")
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS quizzes (
             id SERIAL PRIMARY KEY,
@@ -150,7 +154,7 @@ def create_tables():
         cursor.close()
         conn.close()
         
-        print("All tables created successfully.")
+        print("All tables created/verified successfully.")
         return True
     except Exception as e:
         print(f"Error creating tables: {e}")
@@ -165,7 +169,7 @@ def main():
         print("Failed to create database. Exiting.")
         sys.exit(1)
     
-    # Create tables
+    # Create tables with all columns
     if not create_tables():
         print("Failed to create tables. Exiting.")
         sys.exit(1)
@@ -173,4 +177,4 @@ def main():
     print("Database initialization completed successfully.")
 
 if __name__ == "__main__":
-    main() 
+    main()

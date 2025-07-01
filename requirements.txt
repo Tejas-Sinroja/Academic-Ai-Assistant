@@ -1,35 +1,34 @@
-streamlit
-langchain
-groq
-langchain-groq
-langgraph
-psycopg2-binary
-python-dotenv
-pandas
-numpy
-matplotlib
-chromadb
-langchain-community
-langchainhub
-faiss-cpu
-sentence-transformers
-# Content extraction dependencies
 aiohttp
+asyncio
 beautifulsoup4
-pypdf
-youtube_transcript_api
-# Document loaders
-langchain-text-splitters
-pytesseract
-# RAG components
+datetime
+dotenv
+faiss-cpu
+groq
+huggingface-hub
+langchain
+langchain-community
 langchain-core
-langchain-openai
-# PDF processing
-pdfminer.six
-# Core dependencies
-validators
+langchain-groq
+langchain-text-splitters
+langgraph
+matplotlib
 nest-asyncio
-# Mind map visualization
-streamlit-markmap
-# OpenRouter integration
+numpy
 openai
+pandas
+pdfminer.six
+psycopg2-binary
+pypdf
+python-dotenv
+pytesseract
+pytz
+requests
+scipy
+sentence-transformers
+streamlit
+streamlit-markmap
+typing-extensions
+urllib3
+validators
+youtube-transcript-api
