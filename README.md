@@ -1,5 +1,10 @@
 # Academic AI Assistant
 
+![CI/CD](https://github.com/${{ github.repository }}/workflows/CI/CD%20Pipeline/badge.svg)
+![Tests](https://img.shields.io/github/actions/workflow/status/${{ github.repository }}/.github/workflows/ci-cd.yml?label=tests)
+![Docker](https://img.shields.io/docker/cloud/build/${{ env.DOCKER_IMAGE }})
+
+
 Academic AI Assistant is a powerful multi-agent system designed to transform the way students manage their academic life. Using LangChain's advanced RAG capabilities, it creates a network of specialized AI agents that work together to provide personalized academic support.
 
 ## Features
@@ -132,3 +137,41 @@ If you encounter issues:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## CI/CD Configuration
+
+### Required Secrets
+The following secrets must be configured in GitHub for the CI/CD pipeline to work:
+
+1. **Docker Hub Credentials**:
+   - `DOCKER_HUB_USERNAME`: Your Docker Hub username
+   - `DOCKER_HUB_TOKEN`: Docker Hub access token
+
+2. **DigitalOcean Credentials**:
+   - `DIGITALOCEAN_ACCESS_TOKEN`: DigitalOcean API token
+   - `DO_APP_ID`: DigitalOcean App ID
+
+### Triggering Deployments
+- **Automatic**: Pushes to the `main` branch automatically trigger:
+  - Docker image build and push
+  - Test execution
+  - Staging deployment
+
+- **Manual**: Workflows can be manually triggered via GitHub Actions UI:
+  1. Navigate to Actions tab
+  2. Select "CI/CD Pipeline"
+  3. Click "Run workflow"
+
+### Pipeline Monitoring
+- **Status Badges**:
+  - Build status shown in README header
+  - Test coverage reported via Codecov
+
+- **Log Access**:
+  1. Go to GitHub Actions
+  2. Select the workflow run
+  3. Click on individual jobs to view logs
+
+- **Test Coverage**:
+  - Coverage reports available at codecov.io
+  - Minimum coverage threshold: 80%

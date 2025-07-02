@@ -9,10 +9,28 @@ import os
 import subprocess
 import sys
 import time
+import threading
 from dotenv import load_dotenv
+from flask import Flask, jsonify
+
+# Create Flask app for health checks
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for container monitoring"""
+    return jsonify({"status": "healthy"}), 200
+
+def run_flask():
+    """Run Flask health check server"""
+    app.run(host='0.0.0.0', port=8080)
 
 # Load environment variables
 load_dotenv()
+
+# Start Flask server in a separate thread
+flask_thread = threading.Thread(target=run_flask, daemon=True)
+flask_thread.start()
 
 def check_postgres():
     """Check if PostgreSQL is running"""

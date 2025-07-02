@@ -1,0 +1,44 @@
+# Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and databases
+*.log
+*.sqlite
+*.sqlite3
+
+# Local development files
+.env.local
+.env.development
+.env.test
+
+# Test files
+tests/
+test/
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Documentation
+docs/_build/
+
+# Debug files
+*.prof

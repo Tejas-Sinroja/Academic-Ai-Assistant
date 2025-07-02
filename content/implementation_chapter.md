@@ -80,3 +80,57 @@ graph TD
 - AI Providers: Groq API and OpenRouter
 - Web Framework: Streamlit
 - Configuration: python-dotenv
+
+## Continuous Integration and Deployment
+
+### CI/CD Overview
+The project uses GitHub Actions for automated testing and deployment. The workflow includes:
+- Automated builds and tests on every push
+- Docker image creation and publishing
+- Deployment to staging environment
+
+```mermaid
+graph LR
+    A[Code Push] --> B[Build Docker Image]
+    B --> C[Run Tests]
+    C --> D[Deploy to Staging]
+```
+
+### Setup Instructions
+1. Ensure you have write access to the repository
+2. Configure required secrets in GitHub:
+   - DOCKER_HUB_USERNAME
+   - DOCKER_HUB_TOKEN
+   - DIGITALOCEAN_ACCESS_TOKEN
+   - DO_APP_ID
+
+### Pipeline Stages
+1. **Build Stage**:
+   - Creates Docker image from the codebase
+   - Tags image with commit SHA and 'latest'
+   - Pushes to Docker Hub (main branch only)
+
+2. **Test Stage**:
+   - Sets up Python environment
+   - Runs unit tests with pytest
+   - Generates coverage reports
+   - Uploads coverage to Codecov
+
+3. **Deploy Stage**:
+   - Uses DigitalOcean CLI (doctl)
+   - Creates new deployment on DigitalOcean App Platform
+   - Only runs on main branch
+
+### Troubleshooting Guide
+- **Build Failures**:
+  - Check Docker Hub credentials
+  - Verify Dockerfile syntax
+
+- **Test Failures**:
+  - Review test logs for specific failures
+  - Check Python dependency versions
+
+- **Deployment Issues**:
+  - Verify DigitalOcean token permissions
+  - Check app ID configuration
+  - Review DigitalOcean quota limits
