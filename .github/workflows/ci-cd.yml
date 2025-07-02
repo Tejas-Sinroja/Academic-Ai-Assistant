@@ -45,7 +45,7 @@ jobs:
           
       - name: Run unit tests
         run: |
-          pytest test/ --cov=src --cov-report=xml
+          python -m pytest test/ --cov=src --cov-report=xml
           
       - name: Upload coverage
         uses: codecov/codecov-action@v4
